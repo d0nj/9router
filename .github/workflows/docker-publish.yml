@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing vX.Y.Z tag to publish"
-        required: true
+        description: "Existing vX.Y.Z tag to publish; leave empty to build the selected branch"
+        required: false
         type: string
       promote_latest:
         description: "Promote this republish to latest"
