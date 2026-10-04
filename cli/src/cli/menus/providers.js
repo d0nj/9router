@@ -67,6 +67,8 @@ const PROVIDER_MODELS = {
     { id: "gemini-3.5-flash-extra-low" },
     { id: "gemini-pro-agent" },
     { id: "gemini-3.1-pro-low" },
+    { id: "claude-sonnet-5-5" },
+    { id: "claude-opus-5-5-thinking" },
     { id: "claude-sonnet-4-6" },
     { id: "claude-opus-4-6-thinking" },
     { id: "gpt-oss-120b-medium" },
