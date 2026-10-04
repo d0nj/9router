@@ -189,7 +189,7 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         'claude-opus-5-5-high',
         'claude-opus-5-5-medium',
         'claude-opus-5-5-low',
-        'claude-opus-5-5-thinking',
+        'claude-opus-5-5',
         'claude-sonnet-4-6',
         'claude-opus-4-6-thinking',
         'gpt-oss-120b-medium',

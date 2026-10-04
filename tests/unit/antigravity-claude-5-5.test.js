@@ -18,16 +18,16 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
     expect(ids).toContain("claude-sonnet-5-5-medium");
     expect(ids).toContain("claude-sonnet-5-5-low");
     expect(ids).toContain("claude-sonnet-5-5");
-    expect(ids).toContain("claude-sonnet-5-5-thinking");
+    expect(ids).not.toContain("claude-sonnet-5-5-thinking");
+    expect(ids).not.toContain("claude-opus-5-5-thinking");
     expect(ids).toContain("claude-opus-5-5-high");
     expect(ids).toContain("claude-opus-5-5-medium");
     expect(ids).toContain("claude-opus-5-5-low");
-    expect(ids).toContain("claude-opus-5-5-thinking");
     expect(ids).toContain("claude-opus-5-5");
 
     const sonnet = agModels.find((m) => m.id === "claude-sonnet-5-5");
     expect(sonnet?.upstreamModelId).toBe("claude-sonnet-5-5-high(high)");
-    const opus = agModels.find((m) => m.id === "claude-opus-5-5-thinking");
+    const opus = agModels.find((m) => m.id === "claude-opus-5-5");
     expect(opus?.upstreamModelId).toBe("claude-opus-5-5-high(high)");
   });
 
@@ -36,7 +36,7 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
     expect(upstreamSonnet).toBe("claude-sonnet-5-5-high(high)");
     expect(stripThinkingSuffix(upstreamSonnet)).toBe("claude-sonnet-5-5-high");
 
-    const upstreamOpus = getModelUpstreamId("ag", "claude-opus-5-5-thinking");
+    const upstreamOpus = getModelUpstreamId("ag", "claude-opus-5-5");
     expect(upstreamOpus).toBe("claude-opus-5-5-high(high)");
     expect(stripThinkingSuffix(upstreamOpus)).toBe("claude-opus-5-5-high");
 
@@ -46,7 +46,7 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
   });
 
   it("resolves capabilities for Claude 5.5 models", () => {
-    for (const id of ["claude-sonnet-5-5", "claude-opus-5-5-thinking", "claude-opus-5-5"]) {
+    for (const id of ["claude-sonnet-5-5", "claude-opus-5-5"]) {
       const caps = getCapabilitiesForModel("ag", id);
       expect(caps.vision).toBe(true);
       expect(caps.reasoning).toBe(true);
@@ -60,10 +60,6 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
       input: 2.0,
       output: 10.0,
     });
-    expect(getPricingForModel("ag", "claude-opus-5-5-thinking")).toMatchObject({
-      input: 5.0,
-      output: 25.0,
-    });
     expect(getPricingForModel("ag", "claude-opus-5-5")).toMatchObject({
       input: 5.0,
       output: 25.0,
@@ -73,23 +69,24 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
   it("includes Claude 5.5 models in Antigravity MITM configuration", () => {
     const ag = MITM_TOOLS.antigravity;
     expect(ag.modelAliases).toContain("claude-sonnet-5-5");
-    expect(ag.modelAliases).toContain("claude-opus-5-5-thinking");
+    expect(ag.modelAliases).toContain("claude-opus-5-5");
+    expect(ag.modelAliases).not.toContain("claude-opus-5-5-thinking");
 
     const sonnet = ag.defaultModels.find((m) => m.id === "claude-sonnet-5-5");
     expect(sonnet).toBeTruthy();
     expect(sonnet.alias).toBe("claude-sonnet-5-5");
 
-    const opus = ag.defaultModels.find((m) => m.id === "claude-opus-5-5-thinking");
+    const opus = ag.defaultModels.find((m) => m.id === "claude-opus-5-5");
     expect(opus).toBeTruthy();
-    expect(opus.alias).toBe("claude-opus-5-5-thinking");
+    expect(opus.alias).toBe("claude-opus-5-5");
   });
 
   it("normalizes dotted and dashed model names via MITM synonyms", () => {
     const synonyms = MODEL_SYNONYMS.antigravity;
     expect(synonyms["claude-sonnet-5.5"]).toBe("claude-sonnet-5-5");
-    expect(synonyms["claude-opus-5.5"]).toBe("claude-opus-5-5-thinking");
-    expect(synonyms["claude-opus-5.5-thinking"]).toBe("claude-opus-5-5-thinking");
-    expect(synonyms["claude-opus-5-5"]).toBe("claude-opus-5-5-thinking");
+    expect(synonyms["claude-opus-5.5"]).toBe("claude-opus-5-5");
+    expect(synonyms["claude-opus-5.5-thinking"]).toBe("claude-opus-5-5");
+    expect(synonyms["claude-opus-5-5"]).toBe("claude-opus-5-5");
   });
 
   it("matches Claude 5.5 via MITM patterns before 4.6 fallback", () => {
@@ -104,8 +101,8 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
 
     expect(matchModel("claude-sonnet-5.5")).toBe("claude-sonnet-5-5");
     expect(matchModel("claude-sonnet-5-5")).toBe("claude-sonnet-5-5");
-    expect(matchModel("claude-opus-5.5")).toBe("claude-opus-5-5-thinking");
-    expect(matchModel("claude-opus-5-5-thinking")).toBe("claude-opus-5-5-thinking");
+    expect(matchModel("claude-opus-5.5")).toBe("claude-opus-5-5");
+    expect(matchModel("claude-opus-5-5-thinking")).toBe("claude-opus-5-5");
 
     // Legacy fallback still works
     expect(matchModel("claude-sonnet-4.6")).toBe("claude-sonnet-4-6");
