@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRequire } from "module";
-import { getModelsByProviderId } from "../../open-sse/config/providerModels.js";
+import { getModelsByProviderId, getModelUpstreamId } from "../../open-sse/config/providerModels.js";
+import { stripThinkingSuffix } from "../../open-sse/translator/concerns/thinkingUnified.js";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
 import { getPricingForModel } from "../../open-sse/providers/pricing.js";
 import { MITM_TOOLS } from "../../src/shared/constants/cliTools.js";
@@ -13,10 +14,35 @@ describe("Antigravity Claude 5.5 models (#4555, #4548)", () => {
     const agModels = getModelsByProviderId("ag");
     const ids = agModels.map((m) => m.id);
 
+    expect(ids).toContain("claude-sonnet-5-5-high");
+    expect(ids).toContain("claude-sonnet-5-5-medium");
+    expect(ids).toContain("claude-sonnet-5-5-low");
     expect(ids).toContain("claude-sonnet-5-5");
+    expect(ids).toContain("claude-sonnet-5-5-thinking");
+    expect(ids).toContain("claude-opus-5-5-high");
+    expect(ids).toContain("claude-opus-5-5-medium");
+    expect(ids).toContain("claude-opus-5-5-low");
     expect(ids).toContain("claude-opus-5-5-thinking");
     expect(ids).toContain("claude-opus-5-5");
-    expect(ids).toContain("claude-sonnet-5-5-thinking");
+
+    const sonnet = agModels.find((m) => m.id === "claude-sonnet-5-5");
+    expect(sonnet?.upstreamModelId).toBe("claude-sonnet-5-5-high(high)");
+    const opus = agModels.find((m) => m.id === "claude-opus-5-5-thinking");
+    expect(opus?.upstreamModelId).toBe("claude-opus-5-5-high(high)");
+  });
+
+  it("resolves upstream model ID with thinking stripped for Google Cloud Code API", () => {
+    const upstreamSonnet = getModelUpstreamId("ag", "claude-sonnet-5-5");
+    expect(upstreamSonnet).toBe("claude-sonnet-5-5-high(high)");
+    expect(stripThinkingSuffix(upstreamSonnet)).toBe("claude-sonnet-5-5-high");
+
+    const upstreamOpus = getModelUpstreamId("ag", "claude-opus-5-5-thinking");
+    expect(upstreamOpus).toBe("claude-opus-5-5-high(high)");
+    expect(stripThinkingSuffix(upstreamOpus)).toBe("claude-opus-5-5-high");
+
+    const upstreamHigh = getModelUpstreamId("ag", "claude-sonnet-5-5-high");
+    expect(upstreamHigh).toBe("claude-sonnet-5-5-high(high)");
+    expect(stripThinkingSuffix(upstreamHigh)).toBe("claude-sonnet-5-5-high");
   });
 
   it("resolves capabilities for Claude 5.5 models", () => {
