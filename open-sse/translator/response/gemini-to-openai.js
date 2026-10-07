@@ -39,7 +39,25 @@ function emitFunctionCall(functionCall, state, signature = null) {
 
 // Convert Gemini response chunk to OpenAI format
 export function geminiToOpenAIResponse(chunk, state) {
-  if (!chunk) return null;
+  // Flush: the upstream body ended. Gemini-family streams can close after content
+  // without ever setting candidate.finishReason — the turn is cut off upstream, or an
+  // error frame is swallowed by the candidates guard below. The pivot drops the
+  // terminal null chunk before it reaches this translator, and no other layer
+  // synthesizes a terminal chunk for an OpenAI-speaking client, so without this the
+  // client sees a stream that "ended without finish_reason" and discards the partial
+  // answer it already received.
+  //
+  // "length", not "stop": the stream really did stop early, and "stop" would assert a
+  // clean completion we cannot verify. Kiro makes the same call for a
+  // truncated-after-output turn, tool calls included (executors/kiro.js).
+  if (!chunk) {
+    if (state.finishReasonSent || !state.messageId) return null;
+    const terminalChunk = buildChunk(chunkMeta(state), {}, OPENAI_FINISH.LENGTH);
+    if (state.usage) terminalChunk.usage = state.usage;
+    state.finishReasonSent = true;
+    state.finishReason = OPENAI_FINISH.LENGTH;
+    return terminalChunk;
+  }
   
   // Handle Antigravity wrapper
   const response = chunk.response || chunk;
@@ -150,6 +168,8 @@ export function geminiToOpenAIResponse(chunk, state) {
     
     results.push(finalChunk);
     state.finishReason = finishReason;
+    // Marks the terminal chunk as delivered so the flush path cannot add a second one.
+    state.finishReasonSent = true;
   }
 
   return results.length > 0 ? results : null;
