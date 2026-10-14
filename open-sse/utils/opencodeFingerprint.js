@@ -9,7 +9,67 @@
  */
 
 /** Canonical names required by the upstream free-tier gate. */
-export const OPENCODE_FINGERPRINT_TOOLS = ["bash", "glob", "grep", "read"];
+export const OPENCODE_FINGERPRINT_TOOLS = ["glob", "grep", "read", "shell"];
+
+export const OPENCODE_CANONICAL_TOOL_DEFS = {
+  glob: {
+    description: 'Search file paths using a glob pattern (examples: "**/*.ts", "src/**/*.tsx").',
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Glob pattern to match files against" },
+        path: { type: "string", description: "Directory to search. Defaults to the current working directory." },
+        hidden: { type: "boolean", description: "Include hidden files and directories (default: false)." },
+        limit: { type: "integer", exclusiveMinimum: 0, description: "Maximum number of matching files to return (default: 100)" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+  },
+  grep: {
+    description: "Search file contents using ripgrep's regular expression syntax or literal text matching. Use it to locate specific code, symbols, or text patterns, and narrow searches with `path` or `include`. Returns matching file paths, line numbers, and line previews.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", minLength: 1, description: "Regular expression or literal text to match in file contents." },
+        path: { type: "string", description: "File or directory to search. Defaults to the current working directory." },
+        include: { type: "string", description: "Glob pattern to filter files (for example, \"*.js\" or \"*.{ts,tsx}\")" },
+        literal: { type: "boolean", description: "Treat `pattern` as exact text instead of a regular expression (default: false)." },
+        caseSensitive: { type: "boolean", description: "Use case-sensitive matching (default: true)." },
+        limit: { type: "integer", exclusiveMinimum: 0, description: "Maximum number of matching lines to return (default: 100)" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+  },
+  read: {
+    description: "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File or directory to read" },
+        offset: { type: "integer", minimum: 0, description: "The line or directory entry to start reading from (1-based)" },
+        limit: { type: "integer", minimum: 0, description: "The maximum number of lines or directory entries to read (defaults to and capped at 2000)" },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  shell: {
+    description: "Execute a shell command and return its output. Commands run on Windows using bash. Quote file paths containing spaces or special characters. Prefer dedicated tools over shell commands when possible. When output is large, the full result is saved to a file and a truncated preview is returned. Rely on automatic truncation unless filtering the output is more useful. Commands accept an optional timeout, background commands have no timeout by default. Background commands return immediately, and you will be notified when they complete.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "Shell command string to execute" },
+        workdir: { type: "string", description: "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead." },
+        timeout: { type: "integer", minimum: 0, description: "Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to 120000 for foreground commands. Background commands have no timeout by default." },
+        background: { type: "boolean", description: "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion." },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+  },
+};
 
 // Request body -> names renamed for that request. transformRequest() mutates the
 // same body object that chatCore passed into the executor, so a WeakMap keeps the
@@ -19,6 +79,7 @@ const renamedToolNames = new WeakMap();
 /** Canonical lowercase name when `name` is a quartet member; "" otherwise. */
 export function fingerprintToolKey(name) {
   const lower = String(name ?? "").trim().toLowerCase();
+  if (lower === "bash" || lower === "shell") return "shell";
   return OPENCODE_FINGERPRINT_TOOLS.includes(lower) ? lower : "";
 }
 
@@ -83,17 +144,18 @@ export function appendMissingFingerprintTools(tools, flat) {
   const list = Array.isArray(tools) ? tools : [];
   for (const name of OPENCODE_FINGERPRINT_TOOLS) {
     if (list.some((tool) => fingerprintToolKey(toolNameOf(tool)) === name)) continue;
+    const def = OPENCODE_CANONICAL_TOOL_DEFS[name];
     list.push(flat ? {
       type: "function",
       name,
-      description: "This tool is currently unavailable and must not be used.",
-      parameters: { type: "object", properties: {} },
+      description: def?.description || "",
+      parameters: def?.parameters || { type: "object", properties: {} },
     } : {
       type: "function",
       function: {
         name,
-        description: "This tool is currently unavailable and must not be used.",
-        parameters: { type: "object", properties: {} },
+        description: def?.description || "",
+        parameters: def?.parameters || { type: "object", properties: {} },
       },
     });
   }
@@ -141,9 +203,8 @@ export function applyFingerprintTools(body, flat) {
   // Preserve the existing executor semantics. Responses uses auto when the
   // fingerprint helper supplies tools; chat requests with no caller tools use
   // none so the injected decoys cannot be selected.
-  if (!body.tool_choice) {
-    if (flat) body.tool_choice = "auto";
-    else if (!hadClientTools) body.tool_choice = "none";
+  if (!body.tool_choice || body.tool_choice === "none") {
+    body.tool_choice = "auto";
   }
 
   recordRenamedToolNames(body, map);

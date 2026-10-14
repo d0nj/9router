@@ -15,7 +15,7 @@ import {
   coerceResponsesOutput,
 } from "../translator/formats/responsesApi.js";
 
-const OPENCODE_UA = "opencode/1.18.31";
+const OPENCODE_UA = "opencode/latest/2.0.27/cli";
 const MAX_SESSION_LENGTH = 256;
 const MAX_TOOL_NAME_LEN = 128;
 const SESSION_HEADER = "x-opencode-session";
@@ -485,10 +485,10 @@ export class OpenCodeExecutor extends BaseExecutor {
   }
 
   buildUrl(model) {
-    const base = this.config.baseUrl;
-    if (isResponsesModel(model)) return `${base}/zen/v1/responses`;
-    if (isMessagesModel(model)) return `${base}/zen/v1/messages`;
-    return `${base}/zen/v1/chat/completions`;
+    const base = this.config.baseUrl || "https://opencode.ai";
+    if (isResponsesModel(model)) return `${base}/inference/v1/responses`;
+    if (isMessagesModel(model)) return `${base}/inference/v1/messages`;
+    return `${base}/inference/v1/chat/completions`;
   }
 
   buildHeaders(credentials, stream = true, url = "") {
@@ -512,7 +512,6 @@ export class OpenCodeExecutor extends BaseExecutor {
       "x-opencode-session-id": session,
       "x-session-affinity": session,
       "X-Session-Id": session,
-      "x-opencode-request": requestId,
       "x-opencode-project": lower["x-opencode-project"] || "global",
       "Accept": stream ? "text/event-stream" : "*/*",
     };
