@@ -144,14 +144,11 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   buildHeaders(credentials, stream = true, url, model) {
     const headers = super.buildHeaders(credentials || {}, stream, url, model);
-    const prepared = credentials?.[SESSION_FIELD];
-    if (prepared) {
-      headers[SESSION_HEADER] = prepared;
-      return headers;
-    }
-
-    const fallback = this.prepareRequestCredentials({ credentials });
-    headers[SESSION_HEADER] = fallback[SESSION_FIELD];
+    const prepared = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
+    headers[SESSION_HEADER] = prepared;
+    headers["x-opencode-session-id"] = prepared;
+    headers["x-session-affinity"] = prepared;
+    headers["X-Session-Id"] = prepared;
     return headers;
   }
 

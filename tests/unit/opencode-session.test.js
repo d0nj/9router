@@ -91,10 +91,12 @@ describe("OpenCode Free Session ID Format", () => {
     expect(translated).toHaveLength(30);
 
     // Upstream Zen verifies the 12-hex prefix decodes to ~(BigInt(Date.now()) * 4096n + counter)
-    // The lowest byte of ~(...) always produces 'fe' in hex (ending with 'ffe' in the 12-hex prefix).
     const timeHex = translated.slice(4, 16);
-    expect(timeHex.endsWith("fe")).toBe(true);
-
+    const inverted = (~BigInt("0x" + timeHex)) & 0xffffffffffffn;
+    const decodedMs = Number(inverted >> 12n);
+    const nowMs = Number(BigInt(Date.now()) & 0xfffffffffn);
+    const diff = Math.abs(nowMs - decodedMs);
+    expect(diff < 5000).toBe(true);
     // Stability across repeated translations of the same input
     const repeated = translateSessionId(raw, "claude");
     expect(repeated).toBe(translated);
@@ -166,8 +168,14 @@ describe("OpenCode Free Executor Session Resolution", () => {
     });
 
     expect(result.headers["x-opencode-session"]).toMatch(OPENCODE_SESSION_RE);
+    expect(result.headers["x-opencode-session-id"]).toBe(result.headers["x-opencode-session"]);
+    expect(result.headers["x-session-affinity"]).toBe(result.headers["x-opencode-session"]);
+    expect(result.headers["X-Session-Id"]).toBe(result.headers["x-opencode-session"]);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0][1].headers["x-opencode-session"]).toBe(result.headers["x-opencode-session"]);
+    expect(fetchMock.mock.calls[0][1].headers["x-opencode-session-id"]).toBe(result.headers["x-opencode-session"]);
+    expect(fetchMock.mock.calls[0][1].headers["x-session-affinity"]).toBe(result.headers["x-opencode-session"]);
+    expect(fetchMock.mock.calls[0][1].headers["X-Session-Id"]).toBe(result.headers["x-opencode-session"]);
     expect(fetchMock.mock.calls[0][1].headers["Authorization"]).toBe("Bearer public");
     expect(credentials).not.toHaveProperty("_opencodeSession");
   });
@@ -177,6 +185,9 @@ describe("OpenCode Free Executor Session Resolution", () => {
     const headers = executor.buildHeaders({});
 
     expect(headers["x-opencode-session"]).toMatch(OPENCODE_SESSION_RE);
+    expect(headers["x-opencode-session-id"]).toBe(headers["x-opencode-session"]);
+    expect(headers["x-session-affinity"]).toBe(headers["x-opencode-session"]);
+    expect(headers["X-Session-Id"]).toBe(headers["x-opencode-session"]);
     expect(headers["Authorization"]).toBe("Bearer public");
   });
   it("handles null or undefined body gracefully in transformRequest", () => {

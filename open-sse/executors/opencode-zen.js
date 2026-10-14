@@ -24,7 +24,7 @@ const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 const OPENCODE_FINGERPRINT_TOOLS = ["bash", "glob", "grep", "read"];
 
 function hasValidOpencodeVersion(ua) {
-  const m = String(ua || "").match(/opencode\/(\d+)\.(\d+)(?:\.(\d+))?/i);
+  const m = String(ua || "").match(/opencode\/(?:[a-z0-9_.-]+\/)?(\d+)\.(\d+)(?:\.(\d+))?/i);
   if (!m) return false;
   const major = parseInt(m[1], 10);
   const minor = parseInt(m[2], 10);
@@ -283,15 +283,13 @@ export class OpenCodeZenExecutor extends DefaultExecutor {
     const downstreamUa = lower["user-agent"] || "";
     // Free-tier gate: spoof the official client UA.
     headers["User-Agent"] = hasValidOpencodeVersion(downstreamUa) ? downstreamUa : OPENCODE_UA;
-    headers["x-opencode-client"] = lower["x-opencode-client"] || "desktop";
-    const prepared = credentials?.[SESSION_FIELD];
-    if (prepared) {
-      headers[SESSION_HEADER] = prepared;
-      return headers;
-    }
-
-    const fallback = this.prepareRequestCredentials({ credentials });
-    headers[SESSION_HEADER] = fallback[SESSION_FIELD];
+    headers["x-opencode-client"] = lower["x-opencode-client"] || "cli";
+    headers["x-opencode-project"] = lower["x-opencode-project"] || "global";
+    const prepared = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
+    headers["x-opencode-session"] = prepared;
+    headers["x-opencode-session-id"] = prepared;
+    headers["x-session-affinity"] = prepared;
+    headers["X-Session-Id"] = prepared;
     return headers;
   }
 
