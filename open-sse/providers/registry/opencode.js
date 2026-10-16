@@ -15,10 +15,17 @@ export default {
   transport: {
     baseUrl: "https://opencode.ai",
     headers: {
-      "x-opencode-client": "cli",
+      "x-opencode-client": "desktop",
     },
     forceStream: true,
     noAuth: true,
+    // Zen reasoning models reject multi-turn history whose assistant messages
+    // carry no reasoning_content (400 missing_required_parameter), and the
+    // response pipeline strips the field before it reaches the client, so the
+    // echo can never come from the client. Inject a placeholder instead.
+    reasoningInject: {
+      scope: "all",
+    },
     quirks: {
       forceAutoToolChoiceModels: ["muse-spark-1.3-contributor-free"],
     },
@@ -32,12 +39,12 @@ export default {
   ],
   serviceKinds: ["llm", "systemone"],
   systemoneConfig: {
-    baseUrl: "https://opencode.ai/inference/v1/systemone",
+    baseUrl: "https://opencode.ai/zen/v1/systemone",
     headers: {
-      "x-opencode-client": "cli",
-      "User-Agent": "opencode/latest/2.0.27/cli",
+      "x-opencode-client": "desktop",
+      "User-Agent": "opencode/1.18.31",
     },
   },
-  modelsFetcher: { url: "https://opencode.ai/inference/v1/models", type: "opencode-free" },
+  modelsFetcher: { url: "https://opencode.ai/zen/v1/models", type: "opencode-free" },
   passthroughModels: true,
 };
