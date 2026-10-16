@@ -224,15 +224,16 @@ export const ZED_HOSTED_CONFIG = {
   oauthTimeoutMs: 600_000,
 };
 
-// Nous Research Portal — OAuth 2.0 Device Code flow (RFC 8628) + agent key minting
+// Nous Research Portal — OAuth 2.0 Device Code flow (RFC 8628).
+// Session-key minting (`/api/oauth/agent-key`) is retired, so the login grants
+// `inference:invoke` only and the access token itself is the invoke credential.
 export const NOUS_CONFIG = {
   clientId: "hermes-cli",
   portalBaseUrl: "https://portal.nousresearch.com",
   deviceCodeUrl: "https://portal.nousresearch.com/api/oauth/device/code",
   tokenUrl: "https://portal.nousresearch.com/api/oauth/token",
-  agentKeyUrl: "https://portal.nousresearch.com/api/oauth/agent-key",
   inferenceBaseUrl: "https://inference-api.nousresearch.com/v1",
-  scope: "inference:invoke inference:mint_agent_key",
+  scope: "inference:invoke",
 };
 
 // OAuth timeout (5 minutes)

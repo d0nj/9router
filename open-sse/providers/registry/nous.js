@@ -1,5 +1,4 @@
 import {
-  NOUS_AGENT_KEY_URL,
   NOUS_CHAT_COMPLETIONS_URL,
   NOUS_DEVICE_CODE_URL,
   NOUS_MODELS_URL,
@@ -46,7 +45,6 @@ const nous = {
     portalBaseUrl: NOUS_PORTAL_BASE_URL,
     deviceCodeUrl: NOUS_DEVICE_CODE_URL,
     tokenUrl: NOUS_TOKEN_URL,
-    agentKeyUrl: NOUS_AGENT_KEY_URL,
     scope: NOUS_OAUTH_SCOPE,
   },
   models: [

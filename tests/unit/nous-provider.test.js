@@ -13,7 +13,6 @@ import { applyThinking } from "../../open-sse/translator/concerns/thinkingUnifie
 import { refreshNousToken } from "../../open-sse/services/tokenRefresh.js";
 import nousOAuth from "../../src/lib/oauth/providers/nous.js";
 import {
-  NOUS_AGENT_KEY_URL,
   NOUS_CHAT_COMPLETIONS_URL,
   NOUS_DEVICE_CODE_URL,
   NOUS_MODELS_URL,
@@ -53,7 +52,6 @@ describe("Nous Research provider", () => {
       scope: NOUS_OAUTH_SCOPE,
       deviceCodeUrl: NOUS_DEVICE_CODE_URL,
       tokenUrl: NOUS_TOKEN_URL,
-      agentKeyUrl: NOUS_AGENT_KEY_URL,
     });
   });
 
@@ -243,7 +241,7 @@ describe("Nous Research provider", () => {
     }]);
   });
 
-  it("supports OAuth Device Code exchange and agent-key minting with fallback", async () => {
+  it("supports OAuth Device Code exchange and maps access_token as invoke credential directly", async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         device_code: "dev_123",
@@ -252,63 +250,47 @@ describe("Nous Research provider", () => {
         verification_uri_complete: "https://portal.nousresearch.com/device?user_code=NOUS-1234",
         expires_in: 900,
         interval: 5,
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        api_key: "sk-nous-agent-minted",
-        key_id: "key_abc",
-        expires_at: "2026-10-15T00:00:00Z",
-        expires_in: 7200,
       }), { status: 200 }));
 
     const device = await nousOAuth.requestDeviceCode(nousOAuth.config);
     expect(device.user_code).toBe("NOUS-1234");
-
-    const extra = await nousOAuth.postExchange({ access_token: "at_raw" });
-    expect(extra.agentKey).toBe("sk-nous-agent-minted");
+    expect(nousOAuth.postExchange).toBeUndefined();
 
     const mapped = nousOAuth.mapTokens({
       access_token: "at_raw",
       refresh_token: "rt_raw",
       expires_in: 3600,
       scope: NOUS_OAUTH_SCOPE,
-    }, extra);
-    expect(mapped.apiKey).toBe("sk-nous-agent-minted");
+    });
+    expect(mapped.apiKey).toBe("at_raw");
     expect(mapped.accessToken).toBe("at_raw");
     expect(mapped.refreshToken).toBe("rt_raw");
-    expect(mapped.providerSpecificData.agentKeyId).toBe("key_abc");
-
-    const fallbackMapped = nousOAuth.mapTokens({
-      access_token: "at_raw",
-      refresh_token: "rt_raw",
-      expires_in: 3600,
-    }, { agentKey: null });
-    expect(fallbackMapped.apiKey).toBe("at_raw");
+    expect(mapped.scope).toBe("inference:invoke");
+    expect(mapped.providerSpecificData.inferenceBaseUrl).toBeDefined();
+    expect(mapped.providerSpecificData.agentKeyId).toBeUndefined();
   });
 
-  it("refreshes Nous OAuth token and mints a fresh agent key", async () => {
+  it("refreshes Nous OAuth token without calling retired agent-key endpoint", async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         access_token: "at_refreshed",
         refresh_token: "rt_refreshed",
         expires_in: 3600,
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        api_key: "sk-nous-agent-refreshed",
-        key_id: "key_refreshed",
-        expires_at: "2026-10-15T02:00:00Z",
       }), { status: 200 }));
 
     const refreshed = await refreshNousToken("rt_initial");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://portal.nousresearch.com/api/oauth/token",
+      expect.anything(),
+    );
     expect(refreshed).toMatchObject({
       accessToken: "at_refreshed",
       refreshToken: "rt_refreshed",
       expiresIn: 3600,
-      apiKey: "sk-nous-agent-refreshed",
-      agentKey: "sk-nous-agent-refreshed",
-      providerSpecificData: {
-        agentKeyId: "key_refreshed",
-        agentKeyExpiresAt: "2026-10-15T02:00:00Z",
-      },
+      apiKey: "at_refreshed",
+      agentKey: null,
     });
+    expect(refreshed.providerSpecificData?.agentKeyId).toBeUndefined();
   });
 });

@@ -4,9 +4,13 @@ export const NOUS_MODELS_URL = `${NOUS_INFERENCE_BASE_URL}/models`;
 export const NOUS_PORTAL_BASE_URL = "https://portal.nousresearch.com";
 export const NOUS_DEVICE_CODE_URL = `${NOUS_PORTAL_BASE_URL}/api/oauth/device/code`;
 export const NOUS_TOKEN_URL = `${NOUS_PORTAL_BASE_URL}/api/oauth/token`;
-export const NOUS_AGENT_KEY_URL = `${NOUS_PORTAL_BASE_URL}/api/oauth/agent-key`;
+// The Portal retired the `/api/oauth/agent-key` (session-key minting) surface:
+// it now answers `session_key_minting_retired` with 404, so no client mints a
+// separate inference key any more. A current hermes-cli login requests
+// `inference:invoke` alone and passes the refreshed access token straight to
+// inference as the invoke JWT — there is no second credential to fetch.
 export const NOUS_OAUTH_CLIENT_ID = "hermes-cli";
-export const NOUS_OAUTH_SCOPE = "inference:invoke inference:mint_agent_key";
+export const NOUS_OAUTH_SCOPE = "inference:invoke";
 
 // Use a current free-tier text model for the one-token credential probe so
 // validating a Portal key or OAuth token never consumes paid credits. Only

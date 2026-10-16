@@ -768,7 +768,12 @@ export async function refreshMiniMaxCodeToken(provider, refreshToken, log) {
 }
 
 // ── Nous Research Portal (hermes-cli) ────────────────────────────────────────
-// Flow: refresh_token → new access_token → mint fresh agent_key.
+// Flow: refresh_token → new access_token, which IS the invoke credential.
+// The Portal retired `/api/oauth/agent-key` (session-key minting) — it answers
+// `session_key_minting_retired`, and current hermes-cli logins ask for
+// `inference:invoke` only — so there is no second credential to mint. An older
+// stored connection may still carry a minted key in providerSpecificData; the
+// refreshed access token supersedes it and is what we return as apiKey.
 export async function refreshNousToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("nous", refreshToken, async () => {
@@ -803,47 +808,14 @@ export async function refreshNousToken(refreshToken, log) {
         return null;
       }
 
-      let agentKey = null;
-      let agentKeyId = null;
-      let agentKeyExpiresAt = null;
-      try {
-        const agentKeyResponse = await fetch("https://portal.nousresearch.com/api/oauth/agent-key", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Authorization: `Bearer ${tokenData.access_token}`,
-          },
-          body: JSON.stringify({
-            min_ttl_seconds: 7200,
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-
-        if (agentKeyResponse.ok) {
-          const agentKeyData = await agentKeyResponse.json();
-          agentKey = agentKeyData.api_key || null;
-          agentKeyId = agentKeyData.key_id || null;
-          agentKeyExpiresAt = agentKeyData.expires_at || null;
-          log?.info?.("TOKEN_REFRESH", "Nous agent key minted successfully");
-        } else {
-          const error = await agentKeyResponse.text().catch(() => "");
-          log?.warn?.("TOKEN_REFRESH", "Failed to mint Nous agent key, falling back to access_token", { error });
-        }
-      } catch (mintErr) {
-        log?.warn?.("TOKEN_REFRESH", `Nous agent key mint error: ${mintErr?.message || mintErr}`);
-      }
-
+      // The retired session-key mint used to run here. The refreshed access
+      // token is the invoke credential, so it is returned as apiKey directly.
       return {
         accessToken: tokenData.access_token,
         refreshToken: tokenData.refresh_token || refreshToken,
         expiresIn: tokenData.expires_in,
-        apiKey: agentKey || tokenData.access_token,
-        agentKey,
-        providerSpecificData: {
-          ...(agentKeyId ? { agentKeyId } : {}),
-          ...(agentKeyExpiresAt ? { agentKeyExpiresAt } : {}),
-        },
+        apiKey: tokenData.access_token,
+        agentKey: null,
       };
     } catch (error) {
       log?.error?.("TOKEN_REFRESH", `Error refreshing Nous token: ${error.message}`);
