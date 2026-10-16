@@ -1,3 +1,8 @@
+# Unreleased
+
+## Fixes
+- **OpenCode**: send the free lane's GLM-5.3 ids (`glm-5.3-flash-free`, `glm-5.3-flash`) the effort-only wire the v2 CLI uses — `reasoning_effort` low|high|max without the z.ai `thinking` object, which the gateway's backends reject with `400 json: unknown field "thinking"`
+
 # v0.5.104 (2026-10-15)
 
 ## Features

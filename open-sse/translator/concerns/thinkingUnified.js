@@ -166,6 +166,15 @@ function toLevel(cfg) {
   return null;
 }
 
+// GLM-5.3 only accepts exactly low|high|max (anything else errors); GLM-5.2 accepts
+// a wider set but z.ai maps low/medium->high and xhigh->max server-side anyway, so
+// this 3-value mapping matches both.
+function zaiEffort(level) {
+  if (level === "low" || level === "minimal") return "low";
+  if (level === "high" || level === "medium") return "high";
+  return "max";
+}
+
 function normalizeOpenAILevel(level, supportedLevels) {
   if (level !== "max" && level !== "ultra") return level;
   if (supportedLevels?.includes(level)) return level;
@@ -329,14 +338,17 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels, display) {
       // (see thinkingEffortSupported in capabilities.js). Skip on unsupported models so we
       // don't send a field the API doesn't recognize.
       if (caps.thinkingEffortSupported) {
-        const zaiLvl = toLevel(eff);
-        // GLM-5.3 only accepts exactly low|high|max (anything else errors); GLM-5.2 accepts
-        // a wider set but z.ai maps low/medium->high and xhigh->max server-side anyway, so
-        // this 3-value mapping matches both.
-        body.reasoning_effort = (zaiLvl === "low" || zaiLvl === "minimal") ? "low"
-          : (zaiLvl === "high" || zaiLvl === "medium") ? "high"
-          : "max";
+        body.reasoning_effort = zaiEffort(toLevel(eff));
       }
+      break;
+    }
+    case "zai-effort": {
+      // Same low|high|max set as zai, minus the `thinking` object: the OpenAI-compatible
+      // backends behind the OpenCode free gateway are strict JSON decoders and answer
+      // `json: unknown field "thinking"`, and the v2 CLI's variant table sends only
+      // reasoning_effort for GLM-5.3. Nothing turns thinking off — the model cannot.
+      if (none && canDisable) break;
+      body.reasoning_effort = zaiEffort(toLevel(eff));
       break;
     }
     case "qwen": {

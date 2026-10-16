@@ -24,6 +24,7 @@ const FORMAT_LEVELS = {
   "gemini-level": L.gemini,
   "gemini-budget": L.base,
   zai: L.onOff,
+  "zai-effort": ["low", "high", "max"], // GLM-5.3 wire: no disable, no object — effort only
   qwen: L.base,
   kimi: L.levelMax,
   deepseek: L.hiMax,

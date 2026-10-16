@@ -56,7 +56,7 @@ export const DEFAULT_CAPABILITIES = {
   tools: true,          // function / tool calling
   reasoning: false,     // thinking / reasoning
   // thinking wire format (only meaningful when reasoning:true). null → derive from transport.format.
-  // enum: openai|claude-adaptive|claude-budget|gemini-level|gemini-budget|zai|qwen|deepseek|kimi|minimax|hunyuan|step|nous
+  // enum: openai|claude-adaptive|claude-budget|gemini-level|gemini-budget|zai|zai-effort|qwen|deepseek|kimi|minimax|hunyuan|step|nous
   thinkingFormat: null,
   thinkingCanDisable: true,  // false → model cannot turn thinking off (clamp to min instead of disable)
   thinkingRange: null,       // { min, max } for budget formats; null = no clamp
@@ -218,6 +218,17 @@ export const PROVIDER_CAPABILITIES = {
     "z-ai/glm-5.2": { reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 },
     "deepseek-ai/deepseek-v4-pro": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
     "deepseek-ai/deepseek-v4-flash": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
+  },
+  // GLM-5.3 on the OpenCode free lane (/inference/v1, the surface the v2 CLI drives
+  // with @ai-sdk/openai-compatible) is served by backends that reject the z.ai
+  // `thinking` object — 400 `json: unknown field "thinking"` — and read the effort
+  // straight off reasoning_effort. The CLI's own variant table for these ids offers
+  // exactly low|high|max effort and never sends `thinking`, so mirror it: zai-effort
+  // keeps the 3-value mapping, drops the object. Limits/modalities are models.dev's
+  // entries for provider `opencode` (the -free id is capped at 200k context).
+  "opencode": {
+    "glm-5.3-flash-free": { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "zai-effort", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 32000 },
+    "glm-5.3-flash": { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "zai-effort", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 131072 },
   },
   // glm-5.3-flash on OpenCode Go is served by a backend that rejects the z.ai
   // `thinking` object (400: unknown field "thinking") and wants reasoning_effort.
