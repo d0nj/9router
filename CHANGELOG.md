@@ -3,6 +3,7 @@
 ## Fixes
 - **OpenCode**: send the free lane's GLM-5.3 ids (`glm-5.3-flash-free`, `glm-5.3-flash`) the effort-only wire the v2 CLI uses — `reasoning_effort` low|high|max without the z.ai `thinking` object, which the gateway's backends reject with `400 json: unknown field "thinking"`
 - **Nous**: drop retired session-key minting endpoint (`/api/oauth/agent-key`) from token refresh and OAuth exchange; mirror current Hermes Agent (`hermes-cli`) by using the refreshed access token directly as the invoke credential with `inference:invoke` scope
+- **OpenCode Free**: honor the `low|high|max` reasoning efforts of `oc/deepseek-v4.1-flash-free` — the generic DeepSeek level set no longer advertises medium/xhigh, and `low` now reaches the upstream verbatim instead of collapsing to `high`
 
 # v0.5.104 (2026-10-15)
 
