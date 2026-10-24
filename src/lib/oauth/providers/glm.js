@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { GLM_OAUTH_CONFIG } from "../constants/oauth.js";
+import { resolveZCodeDeviceMid } from "open-sse/shared/zcodeFingerprint.js";
 
 // Zai GLM Coding OAuth — CLI polling flow (mirrors the official
 // ZCode CLI, apps/zcode-cli packages/adapters/src/auth/cli-oauth.ts +
@@ -136,6 +137,7 @@ const glm = {
         access_token: planApiKey,
         _zcodeJwtToken: data.token || "",
         _zaiBusinessToken: businessToken,
+        _zcodeDeviceMid: await resolveZCodeDeviceMid(),
         _zaiRefreshToken:
           providerData.refresh_token || providerData.refreshToken || data.refresh_token || data.refreshToken || "",
         _zcodeUser: data.user || {},
@@ -156,6 +158,7 @@ const glm = {
         userId: user.user_id || undefined,
         zcodeJwtToken: tokens._zcodeJwtToken || undefined,
         zaiBusinessToken: tokens._zaiBusinessToken || undefined,
+        deviceMid: tokens._zcodeDeviceMid || undefined,
         ...(tokens._zaiRefreshToken ? { zaiRefreshToken: tokens._zaiRefreshToken } : {}),
       },
     };

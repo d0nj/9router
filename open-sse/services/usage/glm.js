@@ -4,6 +4,7 @@
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { U } from "./shared.js";
+import { getZaiStartPlan } from "../startPlan.js";
 
 // GLM quota endpoints (region-aware) — url from registry transport.usage
 const GLM_QUOTA_URLS = {
@@ -61,7 +62,7 @@ export function parseGlmQuotaResponse(json) {
 /**
  * GLM Coding Plan usage (international + China regions)
  */
-export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
+export async function getGlmUsage(apiKey, provider, proxyOptions = null, providerSpecificData = {}) {
   if (!apiKey) {
     return { message: "GLM API key not available." };
   }
@@ -90,8 +91,39 @@ export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
 
     const json = await response.json();
     const { plan, quotas } = parseGlmQuotaResponse(json);
-    return { plan, quotas };
+    // Optional: a missing/expired trial, a dead ZCode JWT or an upstream change
+    // must never disturb the coding-plan usage that already succeeded.
+    const startPlan = await getZaiStartPlan({
+      zcodeJwtToken: providerSpecificData?.zcodeJwtToken,
+      deviceMid: providerSpecificData?.deviceMid,
+      proxyOptions,
+    }).catch(() => null);
+    return applyStartPlan({ plan, quotas }, startPlan, provider);
   } catch (error) {
     return { message: `GLM error: ${error.message}` };
   }
+}
+
+// Start Plan rides the same connection as the coding plan. While the trial is
+// active it becomes one extra quota row; once it is gone (or never existed)
+// the coding-plan usage is returned untouched, so nothing has to be unwound.
+function applyStartPlan(usage, startPlan, provider) {
+  if (provider !== "glm" || !startPlan?.active) return usage;
+  const models = startPlan.modelIds.length ? ` — ${startPlan.modelIds.join(", ")}` : "";
+  return {
+    ...usage,
+    plan: `${usage.plan} + Start Plan`,
+    startPlan,
+    quotas: {
+      ...usage.quotas,
+      "Start Plan": {
+        name: `Start Plan (Active)${models}`,
+        used: 0,
+        total: 0,
+        percentage: 0,
+        percentageIsUsed: false,
+        emptyMessage: null,
+      },
+    },
+  };
 }

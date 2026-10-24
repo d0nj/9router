@@ -32,6 +32,14 @@ export default {
     businessLoginUrl: "https://api.z.ai/api/auth/z/login",
     apiBaseUrl: "https://api.z.ai",
     planApiKeyName: "zcode-api-key",
+    // Start Plan is scoped to the free trial account and is not enabled by the
+    // long-lived coding-plan key: the trial is metered through the ZCode plan
+    // billing endpoint with the ZCode JWT, and upstream gates on the client
+    // fingerprint (see shared/zcodeFingerprint.js).
+    startPlan: {
+      origin: "https://zcode.z.ai",
+      billingBalanceUrl: "https://zcode.z.ai/api/v1/zcode-plan/billing/balance",
+    },
   },
   transport: {
     baseUrl: "https://api.z.ai/api/anthropic/v1/messages",
@@ -43,6 +51,9 @@ export default {
       header: "x-api-key",
       scheme: "raw",
     },
+    // Start Plan entitlement is resolved per ZCode client fingerprint, not per
+    // key, so the Claude surface carries the desktop identity too.
+    hooks: ["zcodeHeaders"],
     usage: {
       url: "https://api.z.ai/api/monitor/usage/quota/limit",
     },
@@ -53,6 +64,7 @@ export default {
       format: "openai",
       baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
+      hooks: ["zcodeHeaders"],
     },
     {
       format: "claude",
@@ -60,6 +72,7 @@ export default {
       urlSuffix: "?beta=true",
       headers: { ...CLAUDE_API_HEADERS },
       auth: { combined: true, header: "x-api-key", scheme: "raw" },
+      hooks: ["zcodeHeaders"],
     },
   ],
   models: [
