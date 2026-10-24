@@ -1,8 +1,5 @@
-import { PROVIDER_OAUTH } from "../providers/index.js";
 import { buildZCodeHeaders } from "../shared/zcodeFingerprint.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-
-const BALANCE_TIMEOUT_MS = 15_000;
 
 // ZCode answers business calls as { code, msg, data }; code 0/200 (or absent) is success.
 function isSuccessCode(code) {
@@ -15,18 +12,15 @@ function isStartPlanIdentity(value) {
 }
 
 function hasActiveStartPlan(plans) {
-  return Boolean(
-    Array.isArray(plans) &&
-      plans.some((plan) => {
-        if (String(plan?.status ?? "").trim().toLowerCase() !== "active") return false;
-        const id = String(plan?.plan_id ?? "").trim().toLowerCase();
-        const name = String(plan?.name ?? "").trim().toLowerCase();
-        // Upstream: an active plan carrying no identity at all counts as the
-        // account's own. Any named plan must name the Start Plan.
-        if (!id && !name) return true;
-        return isStartPlanIdentity(id) || isStartPlanIdentity(name);
-      })
-  );
+  return (Array.isArray(plans) ? plans : []).some((plan) => {
+    if (String(plan?.status ?? "").trim().toLowerCase() !== "active") return false;
+    const id = String(plan?.plan_id ?? "").trim().toLowerCase();
+    const name = String(plan?.name ?? "").trim().toLowerCase();
+    // Upstream: an active plan carrying no identity at all counts as the
+    // account's own. Any named plan must name the Start Plan.
+    if (!id && !name) return true;
+    return isStartPlanIdentity(id) || isStartPlanIdentity(name);
+  });
 }
 
 // Trial entitlements are grouped by the models they meter ("model:<id>").
@@ -48,18 +42,21 @@ function startPlanModelIds(balances) {
   return ids;
 }
 
+function startPlanBase(config) {
+  return config?.startPlan?.origin || "https://zcode.z.ai";
+}
+
 /**
  * Start Plan snapshot for a ZAI connection: whether the free trial is active
  * and which models still carry quota. Returns null when the connection has no
  * ZCode JWT (pasted coding-plan API keys never reach the trial) or when the
  * upstream answer is not a successful balance envelope.
  */
-export async function getZaiStartPlan({ zcodeJwtToken, deviceMid, proxyOptions = null }) {
+export async function getZaiStartPlan({ zcodeJwtToken, deviceMid, config, proxyOptions = null }) {
   const token = zcodeJwtToken?.trim();
-  const balanceUrl = PROVIDER_OAUTH.glm?.startPlan?.billingBalanceUrl;
-  if (!token || !balanceUrl) return null;
+  if (!token) return null;
 
-  const url = new URL(balanceUrl);
+  const url = new URL("/api/v1/zcode-plan/billing/balance", startPlanBase(config));
   const response = await proxyAwareFetch(
     url.href,
     {
@@ -88,4 +85,27 @@ export async function getZaiStartPlan({ zcodeJwtToken, deviceMid, proxyOptions =
       status: plan?.status ?? null,
     })),
   };
+}
+
+// Start Plan inference rides its own origin and pays from the trial pool, so a
+// coding-plan key with no balance answers 1113 while the trial still works.
+// Paths mirror buildZCodeEndpointUrls(): the OpenAI surface is bare, the Claude
+// surface appends /v1/messages.
+export function getStartPlanTransport(startPlan) {
+  if (!startPlan?.origin) return null;
+  return {
+    openai: { baseUrl: `${startPlan.origin}/api/v1/zcode-plan/chat/completions`, format: "openai" },
+    claude: { baseUrl: `${startPlan.origin}/api/v1/zcode-plan/anthropic/v1/messages`, format: "claude" },
+  };
+}
+
+/**
+ * Whether the Start Plan should serve this model: the trial must be active and
+ * the balance pool must meter the model. Both come from the same snapshot.
+ */
+export function startPlanCoversModel(snapshot, modelId) {
+  if (!snapshot?.active) return false;
+  if (!snapshot.modelIds.length) return true;
+  const wanted = String(modelId ?? "").trim().toLowerCase();
+  return snapshot.modelIds.some((id) => id.toLowerCase() === wanted);
 }

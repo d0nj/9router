@@ -32,13 +32,14 @@ export default {
     businessLoginUrl: "https://api.z.ai/api/auth/z/login",
     apiBaseUrl: "https://api.z.ai",
     planApiKeyName: "zcode-api-key",
-    // Start Plan is scoped to the free trial account and is not enabled by the
-    // long-lived coding-plan key: the trial is metered through the ZCode plan
-    // billing endpoint with the ZCode JWT, and upstream gates on the client
-    // fingerprint (see shared/zcodeFingerprint.js).
+    // Start Plan is a separate plan on its own origin, metered through the
+    // ZCode plan billing endpoint with the ZCode JWT. The coding-plan key does
+    // not fund it: with an exhausted coding balance the same model answers 429
+    // code 1113 while the trial still has quota.
     startPlan: {
       origin: "https://zcode.z.ai",
-      billingBalanceUrl: "https://zcode.z.ai/api/v1/zcode-plan/billing/balance",
+      // Model ids the trial bills, e.g. glm-5.3.
+      models: ["glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6v"],
     },
   },
   transport: {

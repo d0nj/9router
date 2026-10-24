@@ -33,6 +33,8 @@ import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType, shouldDefaultClaudeToolType } from "../translator/concerns/toolCall.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { retryOnStartPlan } from "./chatCore/startPlanFailover.js";
+import { getZaiStartPlan } from "../services/startPlan.js";
 
 /**
  * Core chat handler - shared between SSE and Worker
@@ -387,6 +389,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PROXY", `${provider.toUpperCase()} | ${model} | conn=${connectionName} | no_proxy=${proxyOptions.connectionNoProxy}`);
   }
 
+  // Start Plan: the coding-plan key cannot fund the trial, so an exhausted
+  // balance (429 code 1113) is retried on the trial origin. The snapshot is
+  // read once per request and reused by the failover path.
+  if (provider === "glm" && credentials?.providerSpecificData?.zcodeJwtToken) {
+    credentials.startPlan = await getZaiStartPlan({
+      zcodeJwtToken: credentials.providerSpecificData.zcodeJwtToken,
+      deviceMid: credentials.providerSpecificData.deviceMid,
+      config: PROVIDERS[provider]?.startPlan,
+      proxyOptions,
+    }).catch(() => null);
+  }
+
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   // Most executors return their registry format. Cursor AgentService is an
@@ -489,6 +503,39 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Provider returned error
+  if (!providerResponse.ok) {
+    // Exhausted coding plan: the same connection may still have Start Plan
+    // quota on its own origin. Retry once there before reporting the 429.
+    const trial = await retryOnStartPlan({
+      provider,
+      model,
+      format: targetFormat,
+      status: providerResponse.status,
+      bodyText: await providerResponse.clone().text().catch(() => ""),
+      credentials,
+      execute: () => executor.execute({
+        model,
+        body: translatedBody,
+        stream,
+        credentials,
+        providerSessionId: sessionSeed,
+        clientTool,
+        signal: streamController.signal,
+        log,
+        proxyOptions,
+        providerOverrides,
+      }),
+    });
+    if (trial) {
+      log?.info?.("START_PLAN", `${provider}/${model} exhausted coding plan → Start Plan trial`);
+      providerResponse = trial.response;
+      providerUrl = trial.url;
+      providerHeaders = trial.headers;
+      finalBody = trial.transformedBody ?? finalBody;
+      reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
+    }
+  }
+
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);

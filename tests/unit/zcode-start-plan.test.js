@@ -150,3 +150,85 @@ describe("glm usage with the optional Start Plan", () => {
     expect(usage.plan).toBe("Pro");
   });
 });
+
+describe("Start Plan failover", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const EXHAUSTED = JSON.stringify({
+    error: { code: "1113", message: "Insufficient balance or no resource package. Please recharge." },
+  });
+
+  it("moves an exhausted coding plan onto the trial origin", async () => {
+    const { retryOnStartPlan } = await import("../../open-sse/handlers/chatCore/startPlanFailover.js");
+    const credentials = { accessToken: PLAN_KEY, startPlan: { active: true, modelIds: ["glm-5.3"] } };
+    const execute = vi.fn().mockResolvedValue({
+      response: new Response("{}", { status: 200 }),
+      url: "https://zcode.z.ai/api/v1/zcode-plan/chat/completions",
+    });
+
+    const result = await retryOnStartPlan({
+      provider: "glm",
+      model: "glm-5.3",
+      format: "openai",
+      status: 429,
+      bodyText: EXHAUSTED,
+      credentials,
+      execute,
+    });
+
+    expect(result).not.toBeNull();
+    expect(execute).toHaveBeenCalledOnce();
+    // runtimeTransport is restored so the next request starts on the paid plan
+    expect(credentials.runtimeTransport).toBeUndefined();
+  });
+
+  it("uses the anthropic trial path for Claude-format requests", async () => {
+    const { retryOnStartPlan } = await import("../../open-sse/handlers/chatCore/startPlanFailover.js");
+    const credentials = { startPlan: { active: true, modelIds: [] } };
+    let seen;
+    await retryOnStartPlan({
+      provider: "glm",
+      model: "glm-5.3-flash",
+      format: "claude",
+      status: 402,
+      bodyText: EXHAUSTED,
+      credentials,
+      execute: () => {
+        seen = credentials.runtimeTransport;
+        return { response: new Response("{}", { status: 200 }) };
+      },
+    });
+    expect(seen.baseUrl).toBe("https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages");
+  });
+
+  it("keeps the original error when no trial is active", async () => {
+    const { retryOnStartPlan } = await import("../../open-sse/handlers/chatCore/startPlanFailover.js");
+    const execute = vi.fn();
+    const result = await retryOnStartPlan({
+      provider: "glm",
+      model: "glm-5.3",
+      format: "openai",
+      status: 429,
+      bodyText: EXHAUSTED,
+      credentials: { startPlan: { active: false, modelIds: [] } },
+      execute,
+    });
+    expect(result).toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("does not hijack unrelated quota errors", async () => {
+    const { retryOnStartPlan } = await import("../../open-sse/handlers/chatCore/startPlanFailover.js");
+    const execute = vi.fn();
+    const result = await retryOnStartPlan({
+      provider: "glm",
+      model: "glm-5.3",
+      format: "openai",
+      status: 429,
+      bodyText: JSON.stringify({ error: { code: "1302", message: "Rate limit reached" } }),
+      credentials: { startPlan: { active: true, modelIds: [] } },
+      execute,
+    });
+    expect(result).toBeNull();
+  });
+});
