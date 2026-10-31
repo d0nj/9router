@@ -25,18 +25,36 @@ export default {
     forceStream: true,
     // CodeBuddy intl speaks the same unified OpenAI reasoning_effort shape as CN.
     thinkingFormat: "openai",
+    // Static half of the CLI's channel fingerprint; the per-request ids come
+    // from the codebuddyHeaders hook below.
     headers: {
-      "User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
+      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+      "Content-Type": "application/json; charset=utf-8",
       "X-Product": "SaaS",
-      "X-IDE-Type": "IDE",
-      "X-IDE-Name": "IDE",
-      "x-requested-with": "XMLHttpRequest",
-      "x-codebuddy-request": "1",
+      "X-App": "cli",
+      "X-IDE-Type": "CLI",
+      "X-IDE-Name": "CLI",
+      "X-IDE-Version": "2.108.1",
+      "X-Private-Data": "false",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CodeBuddy-Request": "1",
+      "X-Domain": "www.codebuddy.ai",
+      "X-Stainless-Lang": "js",
+      "X-Stainless-Arch": "x64",
+      "X-Stainless-Os": "Windows",
+      "X-Stainless-Package-Version": "6.25.0",
+      "X-Stainless-Helper-Method": "stream",
+      "X-Stainless-Retry-Count": "0",
+      "X-Agent-Intent": "craft",
+      "X-Agent-Purpose": "conversation",
     },
     auth: {
       combined: true,
       header: "Authorization",
       scheme: "bearer",
+      // Channel check requires the plugin's request/conversation ids — without
+      // them upstream rejects with 400 / 11128 "request illegal".
+      hooks: ["codebuddyHeaders"],
     },
     // Intl billing endpoint mirrors CN shape (data.Response.Data.Accounts[]).
     usage: {

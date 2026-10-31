@@ -5,7 +5,6 @@ import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selec
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders, NOUS_ATTRIBUTION } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
-import { buildZCodeHeaders } from "../shared/zcodeFingerprint.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
@@ -41,6 +40,22 @@ function applyAuth(headers, desc, credentials) {
 
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
+  // CodeBuddy (CN + intl): the gateway runs a channel check per request and
+  // rejects anything that does not carry the conversation/request identifiers
+  // the official plugin sends. Without them upstream answers
+  // 400 {"code":11128,"msg":"request illegal"} with
+  // "This call failed channel verification, possibly because it was not sent
+  // from an official client" — the request never reaches the model.
+  // The same request WITH these headers passes channel verification and gets
+  // as far as the real rate limiter (429 / 6004).
+  codebuddyHeaders: (h) => {
+    // Same shapes upstream's plugin sends: 32-hex request ids, dashed conversation id.
+    const requestId = randomUUID().replace(/-/g, "");
+    h["X-Request-ID"] = requestId;
+    h["X-Conversation-ID"] = randomUUID();
+    h["X-Conversation-Request-ID"] = requestId;
+    h["X-Conversation-Message-ID"] = requestId;
+  },
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   // MiniMax Code (mcode): the placeholder x-api-key rides every request next
@@ -56,9 +71,6 @@ const HEADER_HOOKS = {
   museHeaders: (h, c) => { if (c?.accessToken && !c?.apiKey) h["x-api-version"] = "1.0.0"; },
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
-  // ZCode desktop identity — the Start Plan entitlement is read off these
-  // headers, so the coding-plan surfaces must look like the official client.
-  zcodeHeaders: (h, c) => Object.assign(h, buildZCodeHeaders({ deviceMid: c?.providerSpecificData?.deviceMid })),
 };
 
 // Config-driven OAuth refresh grants — derived from registry oauth.refresh.
@@ -192,7 +204,7 @@ export class DefaultExecutor extends BaseExecutor {
     const headers = { "Content-Type": "application/json", ...transport.headers };
     const desc = transport.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
     // Hooks run BEFORE auth so dynamic overlays can't clobber the token.
-    for (const hook of transport.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
+    for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
     applyAuth(headers, desc, credentials);
 
     // anthropic-compatible-* nodes serving a real Claude model sit in front of

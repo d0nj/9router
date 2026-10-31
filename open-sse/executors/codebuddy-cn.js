@@ -32,49 +32,6 @@ export class CodeBuddyExecutor extends DefaultExecutor {
     super(provider);
   }
 
-  buildHeaders(credentials, stream = true, body, requestHeaders, clientTool = null) {
-    const headers = super.buildHeaders(credentials, true, body, requestHeaders, clientTool);
-    const reqId = crypto.randomUUID().replace(/-/g, "");
-    const convId = crypto.randomUUID();
-    const convReqId = crypto.randomUUID().replace(/-/g, "");
-    const domain =
-      credentials?.providerSpecificData?.domain ||
-      (this.provider === "codebuddy-cn" ? "copilot.tencent.com" : "www.codebuddy.ai");
-
-    delete headers["x-requested-with"];
-    delete headers["x-codebuddy-request"];
-
-    Object.assign(headers, {
-      "Content-Type": "application/json; charset=utf-8",
-      "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
-      "X-Product": "SaaS",
-      "X-App": "cli",
-      "X-IDE-Type": "CLI",
-      "X-IDE-Name": "CLI",
-      "X-IDE-Version": "2.108.1",
-      "X-Private-Data": "false",
-      "X-Requested-With": "XMLHttpRequest",
-      "X-CodeBuddy-Request": "1",
-      "X-Domain": domain,
-      "X-Stainless-Runtime": "node",
-      "X-Stainless-Runtime-Version": process.version || "v24.11.1",
-      "X-Stainless-Lang": "js",
-      "X-Stainless-Arch": "x64",
-      "X-Stainless-Os": "Windows",
-      "X-Stainless-Package-Version": "6.25.0",
-      "X-Stainless-Helper-Method": "stream",
-      "X-Stainless-Retry-Count": "0",
-      "X-Request-ID": reqId,
-      "X-Conversation-ID": convId,
-      "X-Conversation-Request-ID": convReqId,
-      "X-Conversation-Message-ID": reqId,
-      "X-Agent-Intent": "craft",
-      "X-Agent-Purpose": "conversation",
-    });
-
-    return headers;
-  }
-
   transformRequest(model, body, stream, credentials) {
     const nextBody = super.transformRequest(model, body, stream, credentials);
     nextBody.stream = true;

@@ -25,18 +25,36 @@ export default {
     // MiniMax, DeepSeek, Hunyuan) takes reasoning via OpenAI-style reasoning_effort,
     // not its vendor-native thinking shape. Force the openai thinking format.
     thinkingFormat: "openai",
+    // Static half of the CLI's channel fingerprint; the per-request ids come
+    // from the codebuddyHeaders hook below.
     headers: {
       "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+      "Content-Type": "application/json; charset=utf-8",
       "X-Product": "SaaS",
+      "X-App": "cli",
       "X-IDE-Type": "CLI",
       "X-IDE-Name": "CLI",
-      "x-requested-with": "XMLHttpRequest",
-      "x-codebuddy-request": "1",
+      "X-IDE-Version": "2.108.1",
+      "X-Private-Data": "false",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CodeBuddy-Request": "1",
+      "X-Domain": "copilot.tencent.com",
+      "X-Stainless-Lang": "js",
+      "X-Stainless-Arch": "x64",
+      "X-Stainless-Os": "Windows",
+      "X-Stainless-Package-Version": "6.25.0",
+      "X-Stainless-Helper-Method": "stream",
+      "X-Stainless-Retry-Count": "0",
+      "X-Agent-Intent": "craft",
+      "X-Agent-Purpose": "conversation",
     },
     auth: {
       combined: true,
       header: "Authorization",
       scheme: "bearer",
+      // Channel check requires the plugin's request/conversation ids — without
+      // them upstream rejects with 400 / 11128 "request illegal".
+      hooks: ["codebuddyHeaders"],
     },
     // Quota endpoint differs from the chat gateway: POST returns nested Tencent
     // billing payload (data.Response.Data.Accounts[]). See services/usage/codebuddy-cn.js.

@@ -95,11 +95,15 @@ export const MODEL_CAPABILITIES = {
   },
   // Claude Fable 5.1, Opus 5.5/5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   "claude-fable-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
-  // Claude Opus 5.5 — experimental preview on Kiro (rateMultiplier: 2.0, 1M context) (#4410)
-  "claude-opus-5.5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-agentic":           { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-5.5-thinking-agentic":  { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  // Claude Opus 5.5 / Sonnet 5.5 dotted ids: Kiro preview (rateMultiplier: 2.0, 1M context) (#4410),
+  // GitHub Copilot and Token Harbor. Same models as the dashed rows below, so the same 400s
+  // apply: Opus 5.5 rejects thinking.type "disabled", Sonnet 5.5 takes "between_tools" in its
+  // place, and both reject forced tool_choice (any/tool).
+  "claude-opus-5.5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-agentic":           { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-opus-5.5-thinking-agentic":  { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
+  "claude-sonnet-5.5":                 { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingOffType: "between_tools", forcedToolChoice: false },
   // Opus 5.5 rejects thinking.type "disabled" and forced tool_choice (any/tool) with 400.
   "claude-opus-5-5":                   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
   "claude-opus-5-5-thinking":          { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000, thinkingCanDisable: false, forcedToolChoice: false },
@@ -287,6 +291,14 @@ export const PROVIDER_CAPABILITIES = {
     // catalog overlay, so maxOutput must be stated here too).
     "claude-haiku-5-5": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   },
+  // GitHub Copilot routes Claude to its Anthropic-native /v1/messages shim, which applies
+  // Anthropic's per-model thinking rules. claude-haiku-5.5 is adaptive-only there too: the
+  // budget shape the global *claude*haiku* pattern sends comes back 400 "thinking.type.enabled"
+  // is not supported for this model (live probe). Limits are stated because this override
+  // short-circuits the catalog overlay; they match the synced catalog's github entry.
+  "github": {
+    "claude-haiku-5.5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  },
   "commandcode": {
     // The generic commandcode fallback (1M/384k for every unlisted model) happened
     // to give haiku-5-5 the right context by accident. Pin it to the catalog values:
@@ -301,6 +313,9 @@ export const PROVIDER_CAPABILITIES = {
     // Without its own entry gpt-6.1-sol fell through to *gpt-6* (1.05M), overstating
     // the Codex window like any unlisted sibling would.
     "gpt-6.1-sol":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    // codex-rs/models-manager/models.json: gpt-6.1-terra has context_window 500000 on Codex
+    // (the API model is 1.05M; Codex caps the default window like its siblings).
+    "gpt-6.1-terra":             { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 500000, maxOutput: 128000 },
     "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
     "gpt-6-astra[1m]":           CODEX_EXTENDED_CAPS,
     "gpt-6-sol[1m]":             CODEX_EXTENDED_CAPS,
@@ -455,6 +470,18 @@ PROVIDER_CAPABILITIES["qoder"] = {
 // Qoder CN serves the identical model catalog from the CN gateway, so it shares
 // the intl Qoder capability table verbatim (vision/reasoning/contextWindow).
 PROVIDER_CAPABILITIES["qoder-cn"] = PROVIDER_CAPABILITIES["qoder"];
+
+// ZCode coding plans serve GLM through the Anthropic Messages endpoint.
+// Thinking is the binary enabled/disabled shape (budget-style on the wire).
+PROVIDER_CAPABILITIES["zcode"] = {
+  // Start-plan GLM effort tiers: low | high | max (no disable on 5.3 line).
+  "GLM-5.3-Flash": { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "zai-anthropic", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
+  "GLM-5.3":       { reasoning: true, thinkingFormat: "zai-anthropic", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
+  // GLM-5.2 keeps a disable path (none/minimal stop thinking).
+  "GLM-5.2":       { reasoning: true, thinkingFormat: "zai-anthropic", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
+  "GLM-5-Turbo":   { reasoning: true, thinkingFormat: "claude-budget", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
+};
+PROVIDER_CAPABILITIES.zc = PROVIDER_CAPABILITIES["zcode"];
 PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
 PROVIDER_CAPABILITIES.dv = PROVIDER_CAPABILITIES["devin-cli"];
 PROVIDER_CAPABILITIES.devin = PROVIDER_CAPABILITIES["devin-cli"];

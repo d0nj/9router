@@ -32,15 +32,6 @@ export default {
     businessLoginUrl: "https://api.z.ai/api/auth/z/login",
     apiBaseUrl: "https://api.z.ai",
     planApiKeyName: "zcode-api-key",
-    // Start Plan is a separate plan on its own origin, metered through the
-    // ZCode plan billing endpoint with the ZCode JWT. The coding-plan key does
-    // not fund it: with an exhausted coding balance the same model answers 429
-    // code 1113 while the trial still has quota.
-    startPlan: {
-      origin: "https://zcode.z.ai",
-      // Model ids the trial bills, e.g. glm-5.3.
-      models: ["glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6v"],
-    },
   },
   transport: {
     baseUrl: "https://api.z.ai/api/anthropic/v1/messages",
@@ -52,9 +43,6 @@ export default {
       header: "x-api-key",
       scheme: "raw",
     },
-    // Start Plan entitlement is resolved per ZCode client fingerprint, not per
-    // key, so the Claude surface carries the desktop identity too.
-    hooks: ["zcodeHeaders"],
     usage: {
       url: "https://api.z.ai/api/monitor/usage/quota/limit",
     },
@@ -65,7 +53,6 @@ export default {
       format: "openai",
       baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
-      hooks: ["zcodeHeaders"],
     },
     {
       format: "claude",
@@ -73,7 +60,6 @@ export default {
       urlSuffix: "?beta=true",
       headers: { ...CLAUDE_API_HEADERS },
       auth: { combined: true, header: "x-api-key", scheme: "raw" },
-      hooks: ["zcodeHeaders"],
     },
   ],
   models: [
