@@ -41,6 +41,12 @@ const CODEX_GPT_5_6_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh
 // Opus/Sonnet 4.6 lack xhigh (Anthropic + Kiro docs) — keep the 4-level+max set.
 const CLAUDE_NO_XHIGH = ["none", "low", "medium", "high", "max"];
 
+// Muse Wonder declares the full effort enum on models.dev (meta/muse-wonder-1.0
+// reasoning_options: minimal…max), unlike the Spark line whose picker stops at
+// xhigh. Keep "none" as the picker's disable — the Responses wire expresses it
+// by omitting `reasoning`.
+const MUSE_WONDER_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 // Model-name pattern overrides (glob, first match wins) — more precise than format default.
 const PATTERN_THINKING = [
   // ZCode start-plan GLM tiers (Anthropic Messages wire): effort is emitted as
@@ -109,6 +115,8 @@ const PATTERN_THINKING = [
   { provider: "minimax-code", pattern: "MiniMax-M3", levels: ["none", "high"] },
   { provider: "minimax-code-global", pattern: "MiniMax-M3.1*", levels: ["low", "medium", "high", "xhigh", "max"] },
   { provider: "minimax-code-global", pattern: "MiniMax-M3", levels: ["none", "high"] },
+  // Muse Wonder: models.dev declares the full effort enum for this id.
+  { pattern: "*muse-wonder*", levels: MUSE_WONDER_LEVELS },
 ];
 
 // OpenAI documents reasoning.effort "max" for GPT-5.6 and GPT-6 (#5186). The codex rows
