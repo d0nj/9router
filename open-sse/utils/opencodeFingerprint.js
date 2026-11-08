@@ -23,52 +23,46 @@ import path from "node:path";
 /** Names required by the upstream free-tier gate. */
 export const OPENCODE_FINGERPRINT_TOOLS = ["read", "shell"];
 
-// Verbatim sentence chains from the OpenCode v2 CLI tool builders
-// (tool/plugin/read.ts, tool/plugin/shell.ts). Upstream compares description and
-// parameters, so do not reword or reformat these.
-const READ_DESCRIPTION = "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.";
+// A second, purely textual gate on the same route: a declared tool name
+// containing "terminal" (case-insensitive substring) is answered 429
+// FreeUsageLimitError regardless of quota, IP, session or payload size, while
+// the same body with only that name changed answers normally
+// (decolua/9router#5319). Only `tools[]` is inspected — history and system
+// prompt are not — so the declaration travels under an alias and the caller's
+// name is restored on the way back, like a fingerprint-name collision.
+export const GATED_TOOL_NAME_RE = /terminal/i;
+const GATED_TOOL_ALIAS = "run_command";
 
-const FINGERPRINT_TOOL_PARAMETERS = {
+// Verbatim from the OpenCode v2.0.26 CLI. Upstream compares description and
+// parameters, so do not reword or reformat these.
+const FINGERPRINT_TOOL_DEFINITIONS = {
   read: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "File or directory to read" },
-      offset: { type: "integer", minimum: 0, description: "The line or directory entry to start reading from (1-based)" },
-      limit: { type: "integer", minimum: 0, description: "The maximum number of lines or directory entries to read (defaults to and capped at 2000)" },
+    description: "Read the contents of a file or directory. Supports text files, images, and PDFs. Images and PDFs are presented directly to the model. Each text line is prefixed by its 1-based line number as <line>: <content>. The prefix is for reference and is not part of the file content. Directory entries are returned one per line. Use offset and limit to read large files or directories in sections. Prefer one larger read over many small slices, and use grep to find specific content in large files.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File or directory to read" },
+        offset: { type: "integer", minimum: 0, description: "The line or directory entry to start reading from (1-based)" },
+        limit: { type: "integer", minimum: 0, description: "The maximum number of lines or directory entries to read (defaults to and capped at 2000)" },
+      },
+      required: ["path"],
+      additionalProperties: false,
     },
-    required: ["path"],
-    additionalProperties: false,
   },
   shell: {
-    type: "object",
-    properties: {
-      command: { type: "string", description: "Shell command string to execute" },
-      workdir: { type: "string", description: "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead." },
-      timeout: { type: "integer", minimum: 0, description: "Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to 120000 for foreground commands. Background commands have no timeout by default." },
-      background: { type: "boolean", description: "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion." },
+    description: "Execute a shell command and return its output. Commands run on Linux using bash. Quote file paths containing spaces or special characters. Prefer dedicated tools over shell commands when possible. When output is large, the full result is saved to a file and a truncated preview is returned. Rely on automatic truncation unless filtering the output is more useful. Commands accept an optional timeout, background commands have no timeout by default. Background commands return immediately, and you will be notified when they complete.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "Shell command string to execute" },
+        workdir: { type: "string", description: "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead." },
+        timeout: { type: "integer", minimum: 0, description: "Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to 120000 for foreground commands. Background commands have no timeout by default." },
+        background: { type: "boolean", description: "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion." },
+      },
+      required: ["command"],
+      additionalProperties: false,
     },
-    required: ["command"],
-    additionalProperties: false,
   },
-};
-
-// OpenCode derives the shell description's OS wording from the tool host
-// (tool/plugin/shell.ts: "Commands run on ${OS} using ${shell}.", with dev builds
-// sending Windows=powershell, macOS=zsh, Linux=bash). Every real wording is
-// accepted: #4971/#5157 — a Windows-worded caller `shell` used to be renamed
-// and leak a placeholder note because only the Linux form matched.
-const SHELL_DESCRIPTION_HEAD = "Execute a shell command and return its output.";
-const SHELL_DESCRIPTION_TAIL = "Quote file paths containing spaces or special characters. Prefer dedicated tools over shell commands when possible. When output is large, the full result is saved to a file and a truncated preview is returned. Rely on automatic truncation unless filtering the output is more useful. Commands accept an optional timeout, background commands have no timeout by default. Background commands return immediately, and you will be notified when they complete.";
-const SHELL_DESCRIPTION = `${SHELL_DESCRIPTION_HEAD} Commands run on Linux using bash. ${SHELL_DESCRIPTION_TAIL}`;
-
-const ACCEPTED_FINGERPRINT_DESCRIPTIONS = {
-  read: new Set([READ_DESCRIPTION]),
-  shell: new Set([SHELL_DESCRIPTION]),
-};
-
-const FINGERPRINT_TOOL_DEFINITIONS = {
-  read: { description: READ_DESCRIPTION, parameters: FINGERPRINT_TOOL_PARAMETERS.read },
-  shell: { description: SHELL_DESCRIPTION, parameters: FINGERPRINT_TOOL_PARAMETERS.shell },
 };
 
 // Request body -> names renamed for that request. transformRequest() mutates the
@@ -98,11 +92,11 @@ function chatFunctionOf(tool) {
   return fn && typeof fn === "object" && !Array.isArray(fn) ? fn : null;
 }
 
-/** True when `tool` already carries an accepted OpenCode definition for `key`. */
+/** True when `tool` already carries OpenCode's exact definition for `key`. */
 function isFingerprintDefinition(tool, key) {
   const def = tool && (chatFunctionOf(tool) || tool);
   const want = FINGERPRINT_TOOL_DEFINITIONS[key];
-  return !!def && ACCEPTED_FINGERPRINT_DESCRIPTIONS[key].has(def.description)
+  return !!def && def.description === want.description
     && JSON.stringify(def.parameters) === JSON.stringify(want.parameters);
 }
 
@@ -169,7 +163,17 @@ export function concealFingerprintToolNames(tools) {
       continue;
     }
 
-    const key = fingerprintToolKey(toolNameOf(tool));
+    const name = toolNameOf(tool);
+    if (GATED_TOOL_NAME_RE.test(name)) {
+      let alias = GATED_TOOL_ALIAS;
+      for (let i = 2; taken.has(alias); i++) alias = `${GATED_TOOL_ALIAS}${i}`;
+      taken.add(alias);
+      map.set(alias, name);
+      out.push(withToolName(tool, alias));
+      continue;
+    }
+
+    const key = fingerprintToolKey(name);
     if (!key) {
       out.push(tool);
       continue;
@@ -298,17 +302,15 @@ function noteUnavailableTools(body, flat, names, claude = false) {
   if (!Array.isArray(body.messages)) return;
   const first = body.messages[0];
   if (first?.role === "system" && typeof first.content === "string") {
-    body.messages = body.messages.map((msg) =>
-      msg === first ? { ...msg, content: `${msg.content}\n\n${note}` } : msg);
+    body.messages = [{ ...first, content: `${first.content}\n\n${note}` }, ...body.messages.slice(1)];
   } else {
     body.messages = [{ role: "system", content: note }, ...body.messages];
   }
 }
 
-// The env marker gate reads text only: a foreign system prompt plus this exact
-// block passes, so the marker is appended to the caller's own prompt instead of
-// replacing it. Values mirror a real CLI instance on this host; the gate cares
-// about the `Working directory:`/`Workspace root folder:` lines and the tags.
+// The marker gate reads text only: a foreign system prompt plus this exact block
+// passes, so the marker is appended to the caller's own prompt rather than
+// replacing it. Values mirror a real CLI instance on this host.
 const ENV_TAG = "<env>";
 const ENV_HEADING = "Here is some useful information about the environment you are running in:";
 const ENV_TMP_DIR = path.join(os.tmpdir(), "opencode");
@@ -404,8 +406,6 @@ export function applyEnvFingerprint(body, flat, { claude = false } = {}) {
  *
  * @param {object} body
  * @param {boolean} flat - true for Responses tools ({name}), false for chat tools
- * @param {object} [options]
- * @param {boolean} [options.claude] - body posts to /messages (claude shape)
  * @returns {Map<string,string>} map: sent name -> original name
  */
 export function applyFingerprintTools(body, flat, { claude = false } = {}) {
