@@ -58,6 +58,11 @@ const PATTERN_THINKING = [
   { provider: "zc", pattern: "*glm-5.3-flash*", levels: ["low", "high", "max"] },
   { provider: "zc", pattern: "*glm-5.3*", levels: ["low", "high", "max"] },
   { provider: "zc", pattern: "*glm-5.2*", levels: ["none", "high", "max"] },
+  { provider: "antigravity", pattern: "*gemini-4-hydrogen-low*", levels: ["low"] },
+  { provider: "antigravity", pattern: "*gemini-4-hydrogen-medium*", levels: ["medium"] },
+  { provider: "antigravity", pattern: "*gemini-4-hydrogen-high*", levels: ["high"] },
+  { provider: "antigravity", pattern: "*gemini-4-hydrogen-xhigh*", levels: ["xhigh"] },
+  { pattern: "*gemini-4-hydrogen*", levels: ["low", "medium", "high", "xhigh"] },
   // Gemini 4 (Argon) rejects "minimal" with 400 — LOW is the floor; cannot disable thinking.
   { pattern: "*gemini-4*", levels: ["low", "medium", "high"] },
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },
