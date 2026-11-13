@@ -251,7 +251,6 @@ export function mapEffortToSupportedLevel(level, supportedLevels) {
   return up ?? down ?? null;
 }
 
-function toGeminiThinkingLevel(cfg) {
 function toGeminiThinkingLevel(cfg, supportedLevels) {
   const raw = cfg.mode === "auto" ? "high" : (toLevel(cfg) || "high");
   if (supportedLevels?.includes("xhigh") && (raw === "xhigh" || raw === "max")) return "xhigh";
