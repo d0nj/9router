@@ -241,17 +241,89 @@ function normalizeOrganizationId(value) {
   return String(value);
 }
 
+/** Zed plan ids that grant hosted-model access, best first (see Plan in the Zed client). */
+const ZED_HOSTED_MODEL_PLANS = [
+  "zed_pro",
+  "zed_pro_trial",
+  "zed_business",
+  "zed_vip",
+  "zed_student",
+];
+
+function zedOrganizations(userInfo) {
+  const orgs = userInfo?.organizations;
+  return Array.isArray(orgs) ? orgs : [];
+}
+
+function zedPlansByOrganization(userInfo) {
+  const plans = userInfo?.plans_by_organization || userInfo?.plansByOrganization;
+  return plans && typeof plans === "object" ? plans : {};
+}
+
+function zedHostedPlanRank(plan) {
+  const index = ZED_HOSTED_MODEL_PLANS.indexOf(String(plan || "").toLowerCase());
+  return index === -1 ? null : index;
+}
+
+/**
+ * LLM tokens are minted per organization, so a credential bound to a personal or
+ * free organization fails every inference call with "Organization does not have
+ * an active subscription". Prefer the paid organization that holds hosted-model access.
+ */
+export function selectZedOrganizationId(userInfo, preferredOrganizationId = "") {
+  const plansByOrg = zedPlansByOrganization(userInfo);
+  const paidOrganizations = zedOrganizations(userInfo)
+    .map((org) => {
+      const id = normalizeOrganizationId(org?.id);
+      return { id, rank: id ? zedHostedPlanRank(plansByOrg[id]) : null };
+    })
+    .filter((org) => org.id && org.rank !== null)
+    .sort((a, b) => a.rank - b.rank);
+
+  const preferred = normalizeOrganizationId(preferredOrganizationId);
+  if (preferred && paidOrganizations.some((org) => org.id === preferred)) return preferred;
+
+  const defaultOrg = normalizeOrganizationId(
+    userInfo?.default_organization_id || userInfo?.defaultOrganizationId,
+  );
+  if (paidOrganizations.length) {
+    const bestRank = paidOrganizations[0].rank;
+    const defaultIsBest = paidOrganizations.some(
+      (org) => org.id === defaultOrg && org.rank === bestRank,
+    );
+    return defaultIsBest ? defaultOrg : paidOrganizations[0].id;
+  }
+  if (defaultOrg) return defaultOrg;
+  const orgs = zedOrganizations(userInfo);
+  const org = orgs.find((item) => item?.is_personal) || orgs[0];
+  return normalizeOrganizationId(org?.id);
+}
+
 export function resolveZedOrganizationId(credentials, userInfo = null) {
   const psd = credentials?.providerSpecificData || {};
   const explicit = normalizeOrganizationId(psd.organizationId || psd.defaultOrganizationId);
   if (explicit) return explicit;
-  const fromUser = normalizeOrganizationId(
-    userInfo?.default_organization_id || userInfo?.defaultOrganizationId,
-  );
-  if (fromUser) return fromUser;
-  const orgs = userInfo?.organizations || [];
-  const org = orgs.find((item) => item?.is_personal) || orgs[0];
-  return normalizeOrganizationId(org?.id);
+  return selectZedOrganizationId(userInfo);
+}
+
+/**
+ * Correct a credential whose stored organization cannot use hosted models.
+ * Runs on model-catalog loads, where the live user info is already fetched.
+ * Returns the updated credentials — and the organization it moved away from —
+ * or null when the stored organization is already the right one.
+ */
+export function reconcileZedOrganizationCredentials(credentials, userInfo) {
+  const psd = credentials?.providerSpecificData || {};
+  const stored = normalizeOrganizationId(psd.organizationId || psd.defaultOrganizationId);
+  const selected = selectZedOrganizationId(userInfo, stored);
+  if (!selected || selected === stored) return null;
+  const plansByOrg = zedPlansByOrganization(userInfo);
+  if (stored && zedHostedPlanRank(plansByOrg[selected]) === null) return null;
+  const movedFrom = stored || null;
+  return {
+    movedFrom,
+    credentials: { ...credentials, providerSpecificData: { ...psd, organizationId: selected } },
+  };
 }
 
 function zedUserCacheKey(credentials, organizationId) {
@@ -268,19 +340,8 @@ function zedModelCacheKey(credentials) {
   return `${psd.userId || "unknown"}:${org}:${token.slice(-16)}`;
 }
 
-export async function fetchZedLlmToken(credentials, options = {}) {
+async function requestZedLlmToken(credentials, organizationId, options = {}) {
   const config = options.config || {};
-  let organizationId = options.organizationId || resolveZedOrganizationId(credentials);
-  if (!organizationId) {
-    const userInfo = await fetchZedAuthenticatedUser(credentials, options);
-    organizationId = resolveZedOrganizationId(credentials, userInfo);
-  }
-  if (!organizationId) throw new Error("No Zed organization selected");
-
-  const cacheKey = zedUserCacheKey(credentials, organizationId);
-  const cached = llmTokenCache.get(cacheKey);
-  if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) return cached.token;
-
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -302,7 +363,50 @@ export async function fetchZedLlmToken(credentials, options = {}) {
   const token =
     typeof data?.token === "string" ? data.token : data?.token?.[0] || data?.token?.value;
   if (!token) throw new Error("Zed did not return an LLM token");
-  llmTokenCache.set(cacheKey, { token, expiresAt: Date.now() + LLM_TOKEN_TTL_MS });
+  return token;
+}
+
+function zedOrganizationRejected(error) {
+  return [400, 402, 403].includes(Number(error?.status));
+}
+
+async function selectReplacementZedOrganization(credentials, organizationId, options) {
+  const userInfo = await fetchZedAuthenticatedUser(credentials, options);
+  const selected = selectZedOrganizationId(userInfo, organizationId);
+  return selected && selected !== organizationId ? selected : null;
+}
+
+export async function fetchZedLlmToken(credentials, options = {}) {
+  let organizationId = options.organizationId || resolveZedOrganizationId(credentials);
+  if (!organizationId) {
+    const userInfo = await fetchZedAuthenticatedUser(credentials, options);
+    organizationId = resolveZedOrganizationId(credentials, userInfo);
+  }
+  if (!organizationId) throw new Error("No Zed organization selected");
+
+  const cacheKey = zedUserCacheKey(credentials, organizationId);
+  const cached = llmTokenCache.get(cacheKey);
+  if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) return cached.token;
+
+  let token;
+  try {
+    token = await requestZedLlmToken(credentials, organizationId, options);
+  } catch (error) {
+    if (options.organizationId || !zedOrganizationRejected(error)) throw error;
+    const replacementId = await selectReplacementZedOrganization(
+      credentials,
+      organizationId,
+      options,
+    ).catch(() => null);
+    if (!replacementId) throw error;
+    organizationId = replacementId;
+    token = await requestZedLlmToken(credentials, organizationId, options);
+  }
+
+  llmTokenCache.set(zedUserCacheKey(credentials, organizationId), {
+    token,
+    expiresAt: Date.now() + LLM_TOKEN_TTL_MS,
+  });
   return token;
 }
 

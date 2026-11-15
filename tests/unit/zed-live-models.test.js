@@ -86,7 +86,11 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  // Windows keeps the sqlite handle open past the suite, so rm can throw EBUSY.
+  // The temp dir is disposable; never fail the suite for it.
+  try {
+    fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  } catch {}
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });

@@ -4,7 +4,7 @@ import {
   parseZedCallbackPayload,
   decryptZedAccessToken,
   fetchZedAuthenticatedUser,
-  resolveZedOrganizationId,
+  selectZedOrganizationId,
 } from "open-sse/shared/zedAuth.js";
 
 // Zed — RSA keypair native-app flow (NOT OAuth). prepareConfig generates a fresh
@@ -40,7 +40,7 @@ const zed = {
     try {
       userInfo = await fetchZedAuthenticatedUser(credentials, { config: ZED_HOSTED_CONFIG });
     } catch { /* best-effort */ }
-    const organizationId = resolveZedOrganizationId(credentials, userInfo);
+    const organizationId = selectZedOrganizationId(userInfo);
     return {
       userInfo,
       organizationId,

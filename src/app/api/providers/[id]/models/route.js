@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProviderConnectionById } from "@/models";
+import { getProviderConnectionById, updateProviderConnection } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
@@ -11,7 +11,11 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
-import { resolveZedModels } from "open-sse/shared/zedAuth.js";
+import {
+  resolveZedModels,
+  fetchZedAuthenticatedUser,
+  reconcileZedOrganizationCredentials,
+} from "open-sse/shared/zedAuth.js";
 import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
 import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
@@ -176,6 +180,37 @@ function buildQoderModelsResolver(providerId) {
       return { models: [], warning };
     },
   };
+}
+
+async function resolveZedConnectionCredentials(connection) {
+  const credentials = {
+    accessToken: connection.accessToken,
+    providerSpecificData: connection.providerSpecificData || {},
+  };
+
+  let userInfo;
+  try {
+    userInfo = await fetchZedAuthenticatedUser(credentials, { config: ZED_HOSTED_CONFIG });
+  } catch (error) {
+    console.log(`Zed organization lookup failed for ${connection.id}: ${error.message}`);
+    return credentials;
+  }
+
+  const reconciled = reconcileZedOrganizationCredentials(credentials, userInfo);
+  if (!reconciled) return credentials;
+
+  const updated = reconciled.credentials;
+  try {
+    await updateProviderConnection(connection.id, {
+      providerSpecificData: updated.providerSpecificData,
+    });
+  } catch (error) {
+    console.log(`Zed organization repair could not be saved for ${connection.id}: ${error.message}`);
+  }
+  console.log(
+    `Zed connection ${connection.id}: organization ${reconciled.movedFrom || "(none)"} -> ${updated.providerSpecificData.organizationId}`,
+  );
+  return updated;
 }
 
 // Provider models endpoints configuration
@@ -380,11 +415,12 @@ const PROVIDER_MODELS_CONFIG = {
   // Empty/failure yields an explicit warning, never a silent zero list.
   zed: {
     customResolver: async (connection) => {
+      const credentials = await resolveZedConnectionCredentials(connection);
       try {
-        const result = await resolveZedModels({
-          accessToken: connection.accessToken,
-          providerSpecificData: connection.providerSpecificData || {},
-        }, { config: ZED_HOSTED_CONFIG, forceRefresh: true });
+        const result = await resolveZedModels(credentials, {
+          config: ZED_HOSTED_CONFIG,
+          forceRefresh: true,
+        });
         const models = (result?.models || [])
           .filter((m) => m && !m.isDisabled)
           .map((m) => ({
@@ -408,7 +444,9 @@ const PROVIDER_MODELS_CONFIG = {
         return { models: [], warning: "Zed returned no live models." };
       } catch (error) {
         console.log("Failed to fetch Zed models dynamically:", error.message);
-        return { models: [], warning: `Failed to fetch Zed models: ${error.message}` };
+        const organizationId = credentials.providerSpecificData?.organizationId;
+        const recipient = organizationId ? ` for organization ${organizationId}` : "";
+        return { models: [], warning: `Failed to fetch Zed models${recipient}: ${error.message}` };
       }
     },
   },

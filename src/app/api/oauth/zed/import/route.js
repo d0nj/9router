@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { createProviderConnection } from "@/models";
 import {
   fetchZedAuthenticatedUser,
-  resolveZedOrganizationId,
+  selectZedOrganizationId,
 } from "open-sse/shared/zedAuth.js";
 
 /**
@@ -42,7 +42,7 @@ export async function POST(request) {
       );
     }
 
-    const organizationId = resolveZedOrganizationId(credentials, userInfo);
+    const organizationId = selectZedOrganizationId(userInfo);
     const email = userInfo?.email || null;
     const displayName =
       userInfo?.name || userInfo?.display_name || userInfo?.username || `Zed ${userId}`;
