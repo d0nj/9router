@@ -273,6 +273,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // an identity that re-triggers effects on every parent re-render).
   const startOAuthFlow = async () => {
     if (!provider) return;
+    setAwsquickOidcUrl(null);
+    setCallbackUrl("");
     try {
       setError(null);
 
