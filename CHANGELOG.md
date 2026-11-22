@@ -1,3 +1,8 @@
+# v0.5.124 (2026-11-22)
+
+## Fixes
+- **AWS Quick**: merge `messageStop` and `metadata.usage` into the terminal OpenAI SSE chunk so `stream.js` records real `IN`/`OUT` token counts instead of `OUT 0 · estimated: true`, normalize streamed `tool_calls` indices sequentially from `0`, and enable `display: "summarized"` for adaptive thinking so reasoning streams without multi-second TTFT stalls
+
 # v0.5.123 (2026-11-22)
 
 ## Fixes

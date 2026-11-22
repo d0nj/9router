@@ -107,7 +107,7 @@ describe("AWS Quick provider", () => {
     expect(body.requestBody.system).toEqual([{ text: AWS_QUICK.allowedSystemPrefix }]);
     expect(body.requestBody.inferenceConfig).toEqual({ maxTokens: 512 });
     expect(body.requestBody.additionalModelRequestFields).toEqual({
-      thinking: { type: "adaptive" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: "max" },
     });
     expect(body.requestBody.messages).toHaveLength(3);
@@ -167,12 +167,20 @@ describe("AWS Quick provider", () => {
         payload: { contentBlockIndex: 1, delta: { text: "hello" } },
       }),
       encodeEventFrame({ ":message-type": "event" }, {
+        eventType: "contentBlockStart",
+        payload: { contentBlockIndex: 2, start: { toolUse: { toolUseId: "call_1", name: "read" } } },
+      }),
+      encodeEventFrame({ ":message-type": "event" }, {
         eventType: "contentBlockDelta",
         payload: { contentBlockIndex: 2, delta: { toolUse: { input: "{\"x\":1}" } } },
       }),
       encodeEventFrame({ ":message-type": "event" }, {
         eventType: "MessageStop",
-        payload: { stopReason: "end_turn" },
+        payload: { stopReason: "tool_use" },
+      }),
+      encodeEventFrame({ ":message-type": "event" }, {
+        eventType: "metadata",
+        payload: { usage: { inputTokens: 120, outputTokens: 45, totalTokens: 165, cacheReadInputTokens: 30 } },
       }),
     ];
     const body = new ReadableStream({
@@ -199,8 +207,20 @@ describe("AWS Quick provider", () => {
     const text = await result.response.text();
     expect(text).toContain('"reasoning_content":"think"');
     expect(text).toContain('"content":"hello"');
-    expect(text).toContain('"index":2');
-    expect(text).toContain('"finish_reason":"stop"');
+    expect(text).toContain('"index":0');
+    expect(text).not.toContain('"index":2');
+    const dataLines = text
+      .split("\n")
+      .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice(6)));
+    const terminal = dataLines.at(-1);
+    expect(terminal.choices[0].finish_reason).toBe("tool_calls");
+    expect(terminal.usage).toEqual({
+      prompt_tokens: 120,
+      completion_tokens: 45,
+      total_tokens: 165,
+      prompt_tokens_details: { cached_tokens: 30 },
+    });
     expect(text).toContain("data: [DONE]");
 
     const errFrame = encodeEventFrame({ ":message-type": "event" }, {

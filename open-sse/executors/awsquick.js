@@ -138,7 +138,7 @@ function toConverseRequest(body, model) {
 
   if (effort && isClaude) {
     request.additionalModelRequestFields = {
-      thinking: { type: "adaptive" },
+      thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort },
     };
   }
@@ -363,6 +363,31 @@ export class AWSQuickExecutor extends BaseExecutor {
     let textBuffer = "";
     let cancelled = false;
     let finished = false;
+    let pendingFinishReason = null;
+    let pendingUsage = null;
+    const toolCallIndices = new Map();
+    const resolveToolIndex = (blockIndex) => {
+      if (blockIndex == null) return 0;
+      if (!toolCallIndices.has(blockIndex)) {
+        toolCallIndices.set(blockIndex, toolCallIndices.size);
+      }
+      return toolCallIndices.get(blockIndex);
+    };
+
+    const flushTerminal = (controller) => {
+      if (!pendingFinishReason && !pendingUsage) return;
+      const chunk = {
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: pendingFinishReason }],
+        ...(pendingUsage ? { usage: pendingUsage } : {}),
+      };
+      pendingFinishReason = null;
+      pendingUsage = null;
+      controller.enqueue(encoder.encode(sseChunk(chunk)));
+    };
 
     const emitEvent = (controller, event) => {
       if (!event) return;
@@ -373,7 +398,24 @@ export class AWSQuickExecutor extends BaseExecutor {
         finished = true;
         return;
       }
-      const chunk = proxyEventToOpenAIChunk(event, id, created, model);
+      if (event.messageStop) {
+        pendingFinishReason = event.messageStop.stopReason === "tool_use" ? "tool_calls" : "stop";
+        if (pendingUsage) flushTerminal(controller);
+        return;
+      }
+      if (event.metadata?.usage) {
+        const usage = event.metadata.usage;
+        const cachedTokens = usage.cacheReadInputTokens || 0;
+        pendingUsage = {
+          prompt_tokens: usage.inputTokens || 0,
+          completion_tokens: usage.outputTokens || 0,
+          total_tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
+          ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
+        };
+        if (pendingFinishReason) flushTerminal(controller);
+        return;
+      }
+      const chunk = proxyEventToOpenAIChunk(event, id, created, model, resolveToolIndex);
       if (chunk) controller.enqueue(encoder.encode(sseChunk(chunk)));
     };
 
@@ -432,6 +474,7 @@ export class AWSQuickExecutor extends BaseExecutor {
             if (!isEventStream && textBuffer.trim()) {
               emitEvent(controller, parseProxyEvent(textBuffer));
             }
+            flushTerminal(controller);
             controller.enqueue(encoder.encode(SSE_DONE));
             controller.close();
             return;
@@ -491,7 +534,7 @@ export class AWSQuickExecutor extends BaseExecutor {
   }
 }
 
-function proxyEventToOpenAIChunk(event, id, created, model) {
+function proxyEventToOpenAIChunk(event, id, created, model, resolveToolIndex = (i) => i || 0) {
   const base = { id, object: "chat.completion.chunk", created, model };
   const deltaEvent = event.contentBlockDelta?.delta || event.delta;
   if (deltaEvent?.text != null) {
@@ -502,7 +545,7 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
   }
   if (deltaEvent?.toolUse) {
     const tool = deltaEvent.toolUse;
-    const toolIndex = event.contentBlockDelta?.contentBlockIndex ?? tool.index ?? 0;
+    const toolIndex = resolveToolIndex(event.contentBlockDelta?.contentBlockIndex ?? tool.index ?? 0);
     return {
       ...base,
       choices: [{
@@ -526,7 +569,7 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
         index: 0,
         delta: {
           tool_calls: [{
-            index: event.contentBlockStart.contentBlockIndex || 0,
+            index: resolveToolIndex(event.contentBlockStart.contentBlockIndex ?? 0),
             id: tool.toolUseId,
             type: "function",
             function: { name: tool.name, arguments: "" },
@@ -534,22 +577,6 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
         },
         finish_reason: null,
       }],
-    };
-  }
-  if (event.messageStop) {
-    const finishReason = event.messageStop.stopReason === "tool_use" ? "tool_calls" : "stop";
-    return { ...base, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] };
-  }
-  if (event.metadata?.usage) {
-    const usage = event.metadata.usage;
-    return {
-      ...base,
-      choices: [{ index: 0, delta: {}, finish_reason: null }],
-      usage: {
-        prompt_tokens: usage.inputTokens || 0,
-        completion_tokens: usage.outputTokens || 0,
-        total_tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
-      },
     };
   }
   return null;
