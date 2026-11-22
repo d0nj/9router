@@ -461,11 +461,12 @@ export async function refreshAwsQuickToken(refreshToken, providerSpecificData, l
     const clientId = providerSpecificData?.clientId;
     const clientSecret = providerSpecificData?.clientSecret;
     const region = providerSpecificData?.region || "us-east-1";
+    const oidcHost = providerSpecificData?.oidcHost || `oidc.${region}.amazonaws.com`;
     if (!clientId || !clientSecret) {
       log?.warn?.("TOKEN_REFRESH", "AWS Quick refresh skipped: no registered client credentials");
       return null;
     }
-    const response = await proxyAwareFetch(`https://oidc.${region}.amazonaws.com/token`, {
+    const response = await proxyAwareFetch(`https://${oidcHost}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ clientId, clientSecret, refreshToken, grantType: "refresh_token" }),

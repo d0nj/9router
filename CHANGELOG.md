@@ -1,5 +1,9 @@
 # Unreleased
 
+## Fixes
+- **Next.js**: bump to 16.4.6 (and `eslint-config-next` to match) for the upstream security fixes
+- **AWS Quick OAuth**: fall back to `oidc.<region>.api.aws` when the legacy `oidc.<region>.amazonaws.com` endpoint is unreachable, add a 15s timeout, and surface the underlying network error in the message
+
 ## Features
 - **AWS Quick**: add the `awsquick` (`awsq`) provider with a full sign-in flow — Quick discovery page → loopback callback (captures the tenant DataPlane URL) → AWS SSO OIDC authorization code + PKCE → token exchange and refresh — plus routing through the tenant Bedrock proxy (`/integration/quick-work/bedrock-proxy` and `-stream`) with the exact Quick desktop headers; the catalog covers the Claude, Nova, GPT, Gemma and regional inference-profile models observed in the app
 - **Gemini 4 Hydrogen**: add the Gemini API model and Antigravity low/medium/high/xhigh tiers, with high as the default alias; route each tier against its own quota and preserve xhigh thinking on the Gemini wire

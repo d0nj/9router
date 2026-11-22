@@ -4,35 +4,56 @@ import { extractEmailFromAccessToken } from "../providerHelpers.js";
 
 let cachedClient = null;
 
-function endpointsFor(region) {
+function oidcHosts(region) {
   assertValidAwsRegion(region);
+  return [`oidc.${region}.amazonaws.com`, `oidc.${region}.api.aws`];
+}
+
+function endpointsFor(region, host) {
+  const base = `https://${host || oidcHosts(region)[0]}`;
   return {
-    registerUrl: `https://oidc.${region}.amazonaws.com/client/register`,
-    authorizeUrl: `https://oidc.${region}.amazonaws.com/authorize`,
-    tokenUrl: `https://oidc.${region}.amazonaws.com/token`,
+    registerUrl: `${base}/client/register`,
+    authorizeUrl: `${base}/authorize`,
+    tokenUrl: `${base}/token`,
   };
+}
+
+async function postOidc(hosts, path, body, label) {
+  const failures = [];
+  for (const host of hosts) {
+    const url = `https://${host}${path}`;
+    let response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (error) {
+      failures.push(`${host}: ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ""}`);
+      continue;
+    }
+    return { host, response, url };
+  }
+  throw new Error(`AWS Quick ${label} could not reach OIDC endpoints [${failures.join("; ")}]`);
 }
 
 async function registerClient(config, meta) {
   if (cachedClient) return cachedClient;
   const region = meta?.region || config.region || "us-east-1";
-  const { registerUrl } = endpointsFor(region);
-  const response = await fetch(registerUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      clientName: config.clientName,
-      clientType: config.clientType,
-      scopes: config.scopes,
-      grantTypes: config.grantTypes,
-      redirectUris: [config.registerRedirectUri || config.redirectUri],
-      ...(meta?.issuer_url || config.issuerUrl
-        ? { issuerUrl: meta?.issuer_url || config.issuerUrl }
-        : {}),
-    }),
-  });
+  const { host, response } = await postOidc(oidcHosts(region), "/client/register", {
+    clientName: config.clientName,
+    clientType: config.clientType,
+    scopes: config.scopes,
+    grantTypes: config.grantTypes,
+    redirectUris: [config.registerRedirectUri || config.redirectUri],
+    ...(meta?.issuer_url || config.issuerUrl
+      ? { issuerUrl: meta?.issuer_url || config.issuerUrl }
+      : {}),
+  }, "client registration");
   if (!response.ok) {
-    throw new Error(`AWS Quick client registration failed: ${await response.text()}`);
+    throw new Error(`AWS Quick client registration failed (${host}): ${await response.text()}`);
   }
   const data = await response.json();
   if (!data.clientId || !data.clientSecret) {
@@ -42,6 +63,7 @@ async function registerClient(config, meta) {
     clientId: data.clientId,
     clientSecret: data.clientSecret,
     region,
+    host,
     expiresAt: data.clientSecretExpiresAt || null,
   };
   return cachedClient;
@@ -71,7 +93,7 @@ const awsquick = {
   prepareConfig: async (config, meta = {}) => {
     const client = await registerClient(config, meta);
     const region = client.region;
-    const endpoints = endpointsFor(region);
+    const endpoints = endpointsFor(region, client.host);
     return {
       ...config,
       ...endpoints,
@@ -89,20 +111,17 @@ const awsquick = {
   },
 
   exchangeToken: async (config, code, redirectUri, codeVerifier, state, meta = {}) => {
-    const response = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        grantType: "authorization_code",
-        code,
-        redirectUri,
-        codeVerifier,
-      }),
-    });
+    const region = config.region || "us-east-1";
+    const { host, response } = await postOidc(oidcHosts(region), "/token", {
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      grantType: "authorization_code",
+      code,
+      redirectUri,
+      codeVerifier,
+    }, "token exchange");
     if (!response.ok) {
-      throw new Error(`AWS Quick token exchange failed: ${await response.text()}`);
+      throw new Error(`AWS Quick token exchange failed (${host}): ${await response.text()}`);
     }
     const data = await response.json();
     return {
@@ -138,6 +157,7 @@ const awsquick = {
         clientId: tokens.clientId,
         clientSecret: tokens.clientSecret,
         region: tokens.region,
+        oidcHost: cachedClient?.host,
         idToken: tokens.id_token || tokens.idToken,
       },
     };
@@ -147,7 +167,7 @@ const awsquick = {
 
 export function buildAwsQuickOidcUrl({ codeVerifier, state, redirectUri, meta = {} }) {
   const region = meta?.region || AWS_QUICK_CONFIG.region;
-  const config = { ...AWS_QUICK_CONFIG, ...meta, ...endpointsFor(region) };
+  const config = { ...AWS_QUICK_CONFIG, ...meta, ...endpointsFor(region, cachedClient?.host) };
   return oidcAuthorizeUrl(config, codeVerifier, state, redirectUri || config.redirectUri);
 }
 
