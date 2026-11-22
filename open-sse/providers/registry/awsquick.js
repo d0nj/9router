@@ -44,7 +44,7 @@ export default {
     format: "openai",
     headers: {
       "User-Agent": "Amazon Quick/1.2.4660",
-      "X-QuickDsk-mdid": "redaction-validator",
+      "X-QuickDsk-mdid": "user-conversation",
     },
   },
   passthroughModels: true,

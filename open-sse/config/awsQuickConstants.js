@@ -2,10 +2,10 @@ export const AWS_QUICK = {
   proxyPath: "/integration/quick-work/bedrock-proxy",
   proxyStreamPath: "/integration/quick-work/bedrock-proxy-stream",
   apiType: "CONVERSE",
-  source: "redaction-validator",
+  source: "user-conversation",
   headers: {
     "User-Agent": "Amazon Quick/1.2.4660",
-    "X-QuickDsk-mdid": "redaction-validator",
+    "X-QuickDsk-mdid": "user-conversation",
   },
 };
 

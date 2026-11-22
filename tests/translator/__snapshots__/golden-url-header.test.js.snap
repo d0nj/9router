@@ -190,20 +190,20 @@ exports[`GOLDEN buildHeaders (default executor providers) > awsquick → headers
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "Amazon Quick/1.2.4660",
-    "X-QuickDsk-mdid": "redaction-validator",
+    "X-QuickDsk-mdid": "user-conversation",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "Amazon Quick/1.2.4660",
-    "X-QuickDsk-mdid": "redaction-validator",
+    "X-QuickDsk-mdid": "user-conversation",
   },
   "oauth": {
     "Accept": "text/event-stream",
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "Amazon Quick/1.2.4660",
-    "X-QuickDsk-mdid": "redaction-validator",
+    "X-QuickDsk-mdid": "user-conversation",
   },
 }
 `;

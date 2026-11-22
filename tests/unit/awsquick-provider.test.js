@@ -30,7 +30,7 @@ describe("AWS Quick provider", () => {
       "Content-Type": "application/json",
       Authorization: "Bearer TOKEN",
       "User-Agent": "Amazon Quick/1.2.4660",
-      "X-QuickDsk-mdid": "redaction-validator",
+      "X-QuickDsk-mdid": "user-conversation",
     });
   });
 
