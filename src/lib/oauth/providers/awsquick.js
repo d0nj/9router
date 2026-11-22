@@ -166,9 +166,35 @@ const awsquick = {
   },
 };
 
+export function parseAwsQuickDiscovery(callbackUrl) {
+  let url;
+  try {
+    url = new URL(String(callbackUrl));
+  } catch {
+    throw new Error("Invalid Quick callback URL — paste the full URL from the address bar");
+  }
+  const tenantUrl = url.searchParams.get("tenantUrl");
+  if (!tenantUrl) {
+    throw new Error("Quick discovery callback has no tenantUrl — paste the first redirect URL (the one from quick.aws.com sign-in)");
+  }
+  return {
+    nonce: url.searchParams.get("nonce"),
+    tenantUrl,
+    issuerUrl: url.searchParams.get("issuerUrl"),
+    account: url.searchParams.get("account"),
+    idcInstanceId: url.searchParams.get("idcInstanceId"),
+    idcRegion: url.searchParams.get("idcRegion"),
+  };
+}
+
 export function buildAwsQuickOidcUrl({ codeVerifier, state, redirectUri, meta = {} }) {
   const region = meta?.region || AWS_QUICK_CONFIG.region;
-  const config = { ...AWS_QUICK_CONFIG, ...meta, ...endpointsFor(region, cachedClient?.host) };
+  const config = {
+    ...AWS_QUICK_CONFIG,
+    ...(cachedClient ? { clientId: cachedClient.clientId } : {}),
+    ...meta,
+    ...endpointsFor(region, cachedClient?.host),
+  };
   return oidcAuthorizeUrl(config, codeVerifier, state, redirectUri || config.redirectUri);
 }
 

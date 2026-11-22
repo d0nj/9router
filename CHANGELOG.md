@@ -1,8 +1,11 @@
-# Unreleased
+# v0.5.120 (2026-11-22)
 
 ## Fixes
 - **Next.js**: bump to 16.4.6 (and `eslint-config-next` to match) for the upstream security fixes
 - **AWS Quick OAuth**: fall back to `oidc.<region>.api.aws` when the legacy `oidc.<region>.amazonaws.com` endpoint is unreachable, add a 15s timeout, and surface the underlying network error in the message
+- **AWS Quick OAuth**: use native undici for AWS SSO OIDC calls so the patched fetch dispatcher cannot trigger `ECONNRESET`, and register the public client with the `127.0.0.1` loopback redirect AWS requires
+- **AWS Quick OAuth**: fix the two-stage sign-in — the first loopback callback carries only the tenant URL, so it is now resolved into the OIDC authorize URL (with the registered `client_id`) before exchanging the second callback's code; a manual paste path works when 9Router runs away from the browser
+- **CI**: build and publish only on `v*` tags, amd64 only, with a Buildx cache and no upstream workflows
 
 ## Features
 - **AWS Quick**: add the `awsquick` (`awsq`) provider with a full sign-in flow — Quick discovery page → loopback callback (captures the tenant DataPlane URL) → AWS SSO OIDC authorization code + PKCE → token exchange and refresh — plus routing through the tenant Bedrock proxy (`/integration/quick-work/bedrock-proxy` and `-stream`) with the exact Quick desktop headers; the catalog covers the Claude, Nova, GPT, Gemma and regional inference-profile models observed in the app

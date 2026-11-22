@@ -47,6 +47,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const [authMode, setAuthMode] = useState("browser"); // "browser" | "paste-token"
   const [pasteToken, setPasteToken] = useState("");
   const [ideStatus, setIdeStatus] = useState(null);
+  const [awsquickOidcUrl, setAwsquickOidcUrl] = useState(null);
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
   const openedRef = useRef(false);
@@ -85,6 +86,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // Exchange tokens
   const exchangeTokens = useCallback(async (code, state) => {
     if (!authData) return;
+    const meta = provider === "awsquick" && authData.awsquickMeta
+      ? { ...(oauthMeta || {}), ...authData.awsquickMeta }
+      : oauthMeta;
     try {
       const res = await fetch(`/api/oauth/${provider}/exchange`, {
         method: "POST",
@@ -97,7 +101,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           // Zed: thread the login attempt's system_id so the stored
           // connection keeps the id sent to zed.dev (see register-session).
           ...(authData.systemId ? { systemId: authData.systemId } : {}),
-          ...(oauthMeta ? { meta: oauthMeta } : {}),
+          ...(meta ? { meta } : {}),
         }),
       });
 
@@ -410,7 +414,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       let awsquickProxyActive = false;
       let awsquickServerSide = false;
       const fixedPortProxy = provider === "xai" ? "xai" : provider === "awsquick" ? "awsquick" : null;
-      if (fixedPortProxy) {
+      if (fixedPortProxy && (provider !== "awsquick" || isLocalhost)) {
         try {
           const proxyUrl = new URL(`/api/oauth/${fixedPortProxy}/start-proxy`, window.location.origin);
           proxyUrl.searchParams.set("app_port", appPort);
@@ -471,7 +475,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         if (!popupRef.current) {
           setStep("input");
         }
-      } else if (provider === "awsquick" && awsquickProxyActive) {
+      } else if (provider === "awsquick" && awsquickProxyActive && isLocalhost) {
         setStep("waiting");
         popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
         if (!popupRef.current) {
@@ -519,6 +523,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     setAuthMode("browser");
     setPasteToken("");
     setIdeStatus(null);
+    setAwsquickOidcUrl(null);
     pollingAbortRef.current = false;
     flowRef.current = { proxyStarted: false, proxyProvider: null, stopSent: false };
     // Best-effort IDE detection for paste-token providers (Trae/Windsurf)
@@ -700,6 +705,40 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
       const input = callbackUrl.trim();
 
+      // AWS Quick uses two loopback callbacks: the first carries tenantUrl, the
+      // second carries the OIDC code. Neither reaches a remote server, so both
+      // are resolved from the URL the user pastes.
+      if (provider === "awsquick" && input) {
+        const pasted = new URL(input);
+        if (pasted.searchParams.has("tenantUrl")) {
+          const res = await fetch(`/api/oauth/awsquick/resolve-discovery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              callbackUrl: input,
+              state: authData?.state,
+              codeVerifier: authData?.codeVerifier,
+              redirectUri: authData?.redirectUri,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error);
+          setAuthData((prev) => ({ ...prev, awsquickMeta: data.meta }));
+          setAwsquickOidcUrl(data.oidcUrl);
+          setCallbackUrl("");
+          window.open(data.oidcUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (pasted.searchParams.has("code")) {
+          const pastedState = pasted.searchParams.get("state");
+          if (pastedState && authData?.state && pastedState !== authData.state) {
+            throw new Error("Quick login state mismatch — restart the sign-in");
+          }
+          await exchangeTokens(pasted.searchParams.get("code"), pastedState || authData?.state);
+          return;
+        }
+      }
+
       // Trae/Windsurf/Zed proxy flow fallback (popup blocked): paste the full callback URL
       if (PROXY_OAUTH_PROVIDERS.has(provider) && input) {
         const res = await fetch(`/api/oauth/${provider}/exchange`, {
@@ -783,6 +822,24 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     : isKimchiProvider
       ? `${placeholderUrl.replace("code=...", "token=...")} or copied token`
       : placeholderUrl;
+  const isAwsquickManual = provider === "awsquick";
+  const awsquickOidcStage = isAwsquickManual && Boolean(awsquickOidcUrl);
+  const manualAuthUrl = awsquickOidcStage ? awsquickOidcUrl : authData?.authUrl || "";
+  const manualUrlLabel = awsquickOidcStage
+    ? "Step 1: Open this AWS Quick authorization URL"
+    : isAwsquickManual
+      ? "Step 1: Open this AWS Quick sign-in URL"
+      : `Step 1: Open this ${isXaiProvider ? "Grok Build OAuth URL" : "URL"} in your browser`;
+  const manualPasteLabel = awsquickOidcStage
+    ? "Step 2: Paste the final callback URL (the one with code=...)"
+    : isAwsquickManual
+      ? "Step 2: Paste the first redirect URL (the one with tenantUrl=...)"
+      : `Step 2: Paste the ${isXaiProvider ? "callback URL or copied code" : isKimchiProvider ? "callback URL or copied token" : "callback URL"} here`;
+  const manualInputPlaceholder = awsquickOidcStage
+    ? "http://127.0.0.1:18080/?code=...&state=..."
+    : isAwsquickManual
+      ? "http://localhost:18080/callback?nonce=...&tenantUrl=..."
+      : manualPlaceholder;
 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
@@ -867,14 +924,16 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         {(step === "waiting" || step === "input") && !isDeviceCode && !PROXY_OAUTH_PROVIDERS.has(provider) && (
           <>
             {/* Option A: Auto via popup */}
-            <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg bg-sidebar/50">
-              <span className="material-symbols-outlined text-base text-primary animate-spin">
-                progress_activity
-              </span>
-              <span className="text-sm">
-                {isXaiProvider ? "Waiting for Grok Build OAuth…" : "Waiting for popup authorization…"}
-              </span>
-            </div>
+            {!isAwsquickManual && (
+              <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg bg-sidebar/50">
+                <span className="material-symbols-outlined text-base text-primary animate-spin">
+                  progress_activity
+                </span>
+                <span className="text-sm">
+                  {isXaiProvider ? "Waiting for Grok Build OAuth…" : "Waiting for popup authorization…"}
+                </span>
+              </div>
+            )}
 
             {/* Divider */}
             <div className="flex items-center gap-3 my-1">
@@ -886,32 +945,30 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
             {/* Option B: Manual paste */}
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium mb-2">
-                  Step 1: Open this {isXaiProvider ? "Grok Build OAuth URL" : "URL"} in your browser
-                </p>
+                <p className="text-sm font-medium mb-2">{manualUrlLabel}</p>
                 <div className="flex gap-2">
-                  <Input value={authData?.authUrl || ""} readOnly className="flex-1 font-mono text-xs" />
-                  <Button variant="secondary" icon={copied === "auth_url" ? "check" : "content_copy"} onClick={() => copy(authData?.authUrl, "auth_url")} disabled={!authData?.authUrl}>
+                  <Input value={manualAuthUrl} readOnly className="flex-1 font-mono text-xs" />
+                  <Button variant="secondary" icon={copied === "auth_url" ? "check" : "content_copy"} onClick={() => copy(manualAuthUrl, "auth_url")} disabled={!manualAuthUrl}>
                     Copy
                   </Button>
                 </div>
               </div>
 
               <div>
-                <p className="text-sm font-medium mb-2">
-                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : isKimchiProvider ? "callback URL or copied token" : "callback URL"} here
-                </p>
-                <p className="text-xs text-text-muted mb-2">
-                  {provider === "xai"
-                    ? "If xAI shows a code instead of redirecting, paste that code here."
-                    : isKimchiProvider
-                      ? "After authorization, copy the full callback URL or token from your browser."
-                    : "After authorization, copy the full URL from your browser."}
-                </p>
+                <p className="text-sm font-medium mb-2">{manualPasteLabel}</p>
+                {!isAwsquickManual && (
+                  <p className="text-xs text-text-muted mb-2">
+                    {provider === "xai"
+                      ? "If xAI shows a code instead of redirecting, paste that code here."
+                      : isKimchiProvider
+                        ? "After authorization, copy the full callback URL or token from your browser."
+                        : "After authorization, copy the full URL from your browser."}
+                  </p>
+                )}
                 <Input
                   value={callbackUrl}
                   onChange={(e) => setCallbackUrl(e.target.value)}
-                  placeholder={manualPlaceholder}
+                  placeholder={manualInputPlaceholder}
                   className="font-mono text-xs"
                 />
               </div>

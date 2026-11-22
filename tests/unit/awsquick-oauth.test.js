@@ -5,7 +5,7 @@ vi.mock("open-sse/utils/awsOidcFetch.js", () => ({
 }));
 
 import { generateAuthData, exchangeTokens } from "../../src/lib/oauth/providers/index.js";
-import { buildAwsQuickOidcUrl } from "../../src/lib/oauth/providers/awsquick.js";
+import { buildAwsQuickOidcUrl, parseAwsQuickDiscovery } from "../../src/lib/oauth/providers/awsquick.js";
 import { getAwsQuickSessionStatus, registerAwsQuickSession } from "../../src/lib/oauth/utils/server.js";
 
 afterEach(() => {
@@ -50,20 +50,49 @@ describe("AWS Quick OAuth flow", () => {
     });
   });
 
-  it("builds the OIDC authorize URL with PKCE and the loopback redirect", () => {
+  it("builds the OIDC authorize URL with the registered client, PKCE and loopback redirect", async () => {
+    mockAwsFetch();
+    const started = await generateAuthData("awsquick", "http://127.0.0.1:18080", { region: "us-east-1" });
     const url = new URL(buildAwsQuickOidcUrl({
-      codeVerifier: "a".repeat(43),
-      state: "state-1",
+      codeVerifier: started.codeVerifier,
+      state: started.state,
       redirectUri: "http://127.0.0.1:18080",
       meta: { region: "us-east-1" },
     }));
     expect(url.origin + url.pathname).toBe("https://oidc.us-east-1.amazonaws.com/authorize");
+    expect(url.searchParams.get("client_id")).toBe("client-1");
+    expect(url.searchParams.get("state")).toBe(started.state);
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:18080");
     expect(url.searchParams.get("scope")).toBe("quicksight:read_write");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
     expect(url.searchParams.get("prompt")).toBe("login");
+  });
+
+  it("turns the AWS Quick discovery callback into OIDC login material", async () => {
+    mockAwsFetch();
+    const started = await generateAuthData("awsquick", "http://127.0.0.1:18080", { region: "us-east-1" });
+    const tenantUrl = "https://qbs-test.dp.appintegrations.us-east-1.prod.plato.ai.aws.dev";
+    const discoveryUrl = `http://localhost:18080/callback?nonce=${encodeURIComponent(started.state)}&account=123&issuerUrl=https%3A%2F%2Fidentitycenter.amazonaws.com%2Fssoins-x&tenantUrl=${encodeURIComponent(tenantUrl)}&idcInstanceId=ssoins-x&idcRegion=us-east-1`;
+
+    const meta = parseAwsQuickDiscovery(discoveryUrl);
+    expect(meta).toMatchObject({ nonce: started.state, tenantUrl, account: "123", idcRegion: "us-east-1" });
+
+    const oidcUrl = new URL(buildAwsQuickOidcUrl({
+      codeVerifier: started.codeVerifier,
+      state: started.state,
+      redirectUri: started.redirectUri,
+      meta: { ...meta, region: meta.idcRegion },
+    }));
+    expect(oidcUrl.searchParams.get("client_id")).toBe("client-1");
+    expect(oidcUrl.searchParams.get("state")).toBe(started.state);
+    expect(oidcUrl.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:18080");
+  });
+
+  it("rejects a callback that is not the discovery redirect", () => {
+    expect(() => parseAwsQuickDiscovery("http://localhost:18080/callback?code=abc")).toThrow(/tenantUrl/);
+    expect(() => parseAwsQuickDiscovery("not a url")).toThrow(/Invalid Quick callback URL/);
   });
 
   it("carries the discovered tenant URL into the stored connection data", async () => {

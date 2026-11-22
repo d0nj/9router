@@ -144,6 +144,9 @@ export async function GET(request, { params }) {
     }
 
     if (action === "start-proxy") {
+      const state = searchParams.get("state");
+      const codeVerifier = searchParams.get("code_verifier");
+      const redirectUri = searchParams.get("redirect_uri");
       // Trae/Windsurf/Zed use a dynamic-port local callback server (singleton session,
       // state is registered separately via /register-session after /authorize).
       if (provider === "trae") {
@@ -179,9 +182,6 @@ export async function GET(request, { params }) {
       if (!appPort) {
         return NextResponse.json({ error: "Missing app_port" }, { status: 400 });
       }
-      const state = searchParams.get("state");
-      const codeVerifier = searchParams.get("code_verifier");
-      const redirectUri = searchParams.get("redirect_uri");
       const result = provider === "xai"
         ? await startXaiProxy(Number(appPort))
         : await startCodexProxy(Number(appPort));
@@ -640,6 +640,28 @@ export async function POST(request, { params }) {
       const { code, state } = body;
       const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim());
       return NextResponse.json({ success: true, connection });
+    }
+
+    if (action === "resolve-discovery") {
+      if (provider !== "awsquick") {
+        return NextResponse.json({ error: "resolve-discovery only supported for awsquick" }, { status: 400 });
+      }
+      const { callbackUrl, state, codeVerifier, redirectUri } = body || {};
+      if (!callbackUrl || !codeVerifier) {
+        return NextResponse.json({ error: "Missing callbackUrl or codeVerifier" }, { status: 400 });
+      }
+      const { parseAwsQuickDiscovery, buildAwsQuickOidcUrl } = await import("@/lib/oauth/providers/awsquick");
+      const meta = parseAwsQuickDiscovery(callbackUrl);
+      if (state && meta.nonce && meta.nonce !== state) {
+        return NextResponse.json({ error: "Quick login state mismatch — restart the sign-in" }, { status: 400 });
+      }
+      const oidcUrl = buildAwsQuickOidcUrl({
+        codeVerifier,
+        state: state || meta.nonce,
+        redirectUri: redirectUri || "http://127.0.0.1:18080",
+        meta: { ...meta, region: meta.idcRegion || "us-east-1" },
+      });
+      return NextResponse.json({ oidcUrl, meta });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
