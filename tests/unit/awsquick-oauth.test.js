@@ -34,6 +34,16 @@ describe("AWS Quick OAuth flow", () => {
     const url = new URL(data.authUrl);
     expect(url.origin + url.pathname).toBe("https://quick.aws.com/sn");
     expect(url.searchParams.get("qwSurface")).toBe(`desktop:${data.state}:18080:1.2.4660`);
+
+    const registerCall = vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes("/client/register"));
+    expect(JSON.parse(registerCall[1].body)).toEqual({
+      clientName: "AmazonQuick-Desktop",
+      clientType: "public",
+      scopes: ["quicksight:read_write"],
+      grantTypes: ["authorization_code", "refresh_token"],
+      redirectUris: ["http://localhost:18080"],
+      issuerUrl: expect.any(String),
+    });
   });
 
   it("builds the OIDC authorize URL with PKCE and the loopback redirect", () => {
@@ -49,6 +59,7 @@ describe("AWS Quick OAuth flow", () => {
     expect(url.searchParams.get("scope")).toBe("quicksight:read_write");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
+    expect(url.searchParams.get("prompt")).toBe("login");
   });
 
   it("carries the discovered tenant URL into the stored connection data", async () => {

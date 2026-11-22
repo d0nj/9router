@@ -21,8 +21,8 @@ export default {
     },
   },
   oauth: {
-    clientName: "9router AWS Quick",
-    clientType: "confidential",
+    clientName: "AmazonQuick-Desktop",
+    clientType: "public",
     region: "us-east-1",
     issuerUrl: "https://identitycenter.amazonaws.com/ssoins-72234e78857f15a0",
     scopes: ["quicksight:read_write"],
@@ -32,6 +32,7 @@ export default {
     tokenUrl: "https://oidc.us-east-1.amazonaws.com/token",
     registerUrl: "https://oidc.us-east-1.amazonaws.com/client/register",
     redirectUri: "http://127.0.0.1:18080",
+    registerRedirectUri: "http://localhost:18080",
     fixedPort: 18080,
     callbackPath: "/",
     quickStartUrl: "https://quick.aws.com/sn",

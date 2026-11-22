@@ -25,6 +25,7 @@ async function registerClient(config, meta) {
       clientType: config.clientType,
       scopes: config.scopes,
       grantTypes: config.grantTypes,
+      redirectUris: [config.registerRedirectUri || config.redirectUri],
       ...(meta?.issuer_url || config.issuerUrl
         ? { issuerUrl: meta?.issuer_url || config.issuerUrl }
         : {}),
@@ -56,6 +57,7 @@ function oidcAuthorizeUrl(config, codeVerifier, state, redirectUri) {
     state,
     code_challenge: digest,
     code_challenge_method: "S256",
+    prompt: "login",
   });
   return `${config.authorizeUrl}?${params.toString()}`;
 }
