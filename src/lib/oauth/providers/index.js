@@ -33,6 +33,7 @@ import minimaxCode from "./minimax-code.js";
 import minimaxCodeGlobal from "./minimax-code-global.js";
 import nous from "./nous.js";
 import zcode from "./zcode.js";
+import awsquick from "./awsquick.js";
 
 // Provider configurations
 const PROVIDERS = {
@@ -65,6 +66,7 @@ const PROVIDERS = {
   "minimax-code-global": minimaxCodeGlobal,
   nous,
   zcode,
+  awsquick,
 };
 
 export { PROVIDERS };

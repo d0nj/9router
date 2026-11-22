@@ -369,6 +369,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         redirectUri = "http://localhost:1455/auth/callback";
       } else if (provider === "xai") {
         redirectUri = "http://127.0.0.1:56121/callback";
+      } else if (provider === "awsquick") {
+        redirectUri = "http://127.0.0.1:18080";
       } else {
         redirectUri = `http://localhost:${appPort}/callback`;
       }
@@ -402,34 +404,44 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
       }
 
-      // xAI: same fixed-port server-side proxy pattern as codex (port 56121)
+      // xAI and AWS Quick share the fixed-port server-side proxy pattern.
       let xaiProxyActive = false;
       let xaiServerSide = false;
-      if (provider === "xai") {
+      let awsquickProxyActive = false;
+      let awsquickServerSide = false;
+      const fixedPortProxy = provider === "xai" ? "xai" : provider === "awsquick" ? "awsquick" : null;
+      if (fixedPortProxy) {
         try {
-          const proxyUrl = new URL(`/api/oauth/xai/start-proxy`, window.location.origin);
+          const proxyUrl = new URL(`/api/oauth/${fixedPortProxy}/start-proxy`, window.location.origin);
           proxyUrl.searchParams.set("app_port", appPort);
           proxyUrl.searchParams.set("state", data.state);
           proxyUrl.searchParams.set("code_verifier", data.codeVerifier);
           proxyUrl.searchParams.set("redirect_uri", redirectUri);
           const proxyRes = await fetch(proxyUrl.toString());
           const proxyData = await proxyRes.json();
-          xaiProxyActive = proxyData.success;
-          xaiServerSide = !!proxyData.serverSide;
-          if (!xaiProxyActive && proxyData.reason === "port_busy") {
-            throw new Error("Port 56121 in use; close the conflicting process and retry");
+          if (fixedPortProxy === "xai") {
+            xaiProxyActive = proxyData.success;
+            xaiServerSide = !!proxyData.serverSide;
+          } else {
+            awsquickProxyActive = proxyData.success;
+            awsquickServerSide = !!proxyData.serverSide;
+          }
+          if (!proxyData.success && proxyData.reason === "port_busy") {
+            const port = fixedPortProxy === "xai" ? 56121 : 18080;
+            throw new Error(`Port ${port} in use; close the conflicting process and retry`);
           }
         } catch (e) {
           if (e?.message) throw e;
-          xaiProxyActive = false;
+          if (fixedPortProxy === "xai") xaiProxyActive = false;
+          else awsquickProxyActive = false;
         }
       }
 
-      setAuthData({ ...data, redirectUri, codexServerSide, xaiServerSide });
+      setAuthData({ ...data, redirectUri, codexServerSide, xaiServerSide, awsquickServerSide });
 
       // Take ownership of server-side proxies so close stops them exactly once
       // (replaces the per-provider stop branches; same behavior, one ledger).
-      if ((provider === "codex" && codexProxyActive) || (provider === "xai" && xaiProxyActive)) {
+      if ((provider === "codex" && codexProxyActive) || (provider === "xai" && xaiProxyActive) || (provider === "awsquick" && awsquickProxyActive)) {
         flowRef.current.proxyStarted = true;
         flowRef.current.proxyProvider = provider;
         flowRef.current.stopSent = false;
@@ -459,7 +471,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         if (!popupRef.current) {
           setStep("input");
         }
-      } else if (!isLocalhost || provider === "codex" || provider === "xai") {
+      } else if (provider === "awsquick" && awsquickProxyActive) {
+        setStep("waiting");
+        popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
+        if (!popupRef.current) {
+          setStep("input");
+        }
+      } else if (!isLocalhost || provider === "codex" || provider === "xai" || provider === "awsquick") {
         // Non-localhost or proxy failed: manual input mode
         setStep("input");
         window.open(data.authUrl, "_blank");
@@ -532,9 +550,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       ? "codex"
       : authData?.xaiServerSide
         ? "xai"
-        : authData?.proxyProvider
-          ? authData.proxyProvider
-          : null;
+        : authData?.awsquickServerSide
+          ? "awsquick"
+          : authData?.proxyProvider
+            ? authData.proxyProvider
+            : null;
     if (!pollProvider || !authData?.state) return;
     if (callbackProcessedRef.current) return;
     let cancelled = false;

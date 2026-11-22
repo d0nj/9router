@@ -1364,5 +1364,13 @@
     },
     "clientId": "client_P8X5CMWmlaRO9gyO-KSqtg",
     "tokenUrl": "https://zcode.z.ai/api/v1/oauth/token"
+  },
+  "awsquick": {
+    "baseUrl": "https://tenant.invalid",
+    "format": "openai",
+    "headers": {
+      "User-Agent": "Amazon Quick/1.2.4660",
+      "X-QuickDsk-mdid": "redaction-validator"
+    }
   }
 }

@@ -22,6 +22,11 @@ import {
   registerXaiSession,
   getXaiSessionStatus,
   clearXaiSession,
+  startAwsQuickProxy,
+  stopAwsQuickProxy,
+  registerAwsQuickSession,
+  getAwsQuickSessionStatus,
+  clearAwsQuickSession,
   startTraeProxy,
   stopTraeProxy,
   registerTraeSession,
@@ -159,8 +164,16 @@ export async function GET(request, { params }) {
         const result = await startXiaomiMimoProxy();
         return NextResponse.json(result);
       }
+      if (provider === "awsquick") {
+        const result = await startAwsQuickProxy();
+        let serverSide = false;
+        if (result.success && state && codeVerifier && redirectUri) {
+          serverSide = registerAwsQuickSession({ state, codeVerifier, redirectUri });
+        }
+        return NextResponse.json({ ...result, serverSide });
+      }
       if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Proxy only supported for codex/xai/trae/windsurf/zed" }, { status: 400 });
+        return NextResponse.json({ error: "Proxy only supported for codex/xai/awsquick/trae/windsurf/zed" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
       if (!appPort) {
@@ -191,9 +204,10 @@ export async function GET(request, { params }) {
       else if (provider === "windsurf") session = getWindsurfSessionStatus(state);
       else if (provider === "zed") session = getZedSessionStatus(state);
       else if (provider === "xai") session = getXaiSessionStatus(state);
+      else if (provider === "awsquick") session = getAwsQuickSessionStatus(state);
       else if (provider === "codex") session = getCodexSessionStatus(state);
       else if (provider === "xiaomi-mimo") session = getXiaomiMimoSessionStatus(state);
-      else return NextResponse.json({ error: "Poll only supported for codex/xai/trae/windsurf/zed/xiaomi-mimo" }, { status: 400 });
+      else return NextResponse.json({ error: "Poll only supported for codex/xai/awsquick/trae/windsurf/zed/xiaomi-mimo" }, { status: 400 });
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
@@ -211,6 +225,7 @@ export async function GET(request, { params }) {
         else if (provider === "windsurf") clearWindsurfSession(state);
         else if (provider === "zed") clearZedSession(state);
         else if (provider === "xai") clearXaiSession(state);
+        else if (provider === "awsquick") clearAwsQuickSession(state);
         else clearCodexSession(state);
         return NextResponse.json(payload);
       }
@@ -222,9 +237,10 @@ export async function GET(request, { params }) {
       else if (provider === "windsurf") stopWindsurfProxy();
       else if (provider === "zed") stopZedProxy();
       else if (provider === "xai") stopXaiProxy();
+      else if (provider === "awsquick") stopAwsQuickProxy();
       else if (provider === "codex") stopCodexProxy();
       else if (provider === "xiaomi-mimo") stopXiaomiMimoProxy();
-      else return NextResponse.json({ error: "Proxy only supported for codex/xai/trae/windsurf/zed/xiaomi-mimo" }, { status: 400 });
+      else return NextResponse.json({ error: "Proxy only supported for codex/xai/awsquick/trae/windsurf/zed/xiaomi-mimo" }, { status: 400 });
       return NextResponse.json({ success: true });
     }
 

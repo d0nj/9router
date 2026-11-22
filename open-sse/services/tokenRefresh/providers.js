@@ -455,6 +455,43 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
   }, log);
 }
 
+export async function refreshAwsQuickToken(refreshToken, providerSpecificData, log, proxyOptions = null) {
+  if (!refreshToken) return null;
+  return dedupRefresh("awsquick", refreshToken, async () => {
+    const clientId = providerSpecificData?.clientId;
+    const clientSecret = providerSpecificData?.clientSecret;
+    const region = providerSpecificData?.region || "us-east-1";
+    if (!clientId || !clientSecret) {
+      log?.warn?.("TOKEN_REFRESH", "AWS Quick refresh skipped: no registered client credentials");
+      return null;
+    }
+    const response = await proxyAwareFetch(`https://oidc.${region}.amazonaws.com/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ clientId, clientSecret, refreshToken, grantType: "refresh_token" }),
+    }, proxyOptions);
+    if (!response.ok) {
+      const errorText = await response.text();
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh AWS Quick token", {
+        status: response.status,
+        error: errorText,
+      });
+      return null;
+    }
+    const tokens = await response.json();
+    log?.info?.("TOKEN_REFRESH", "Successfully refreshed AWS Quick token", {
+      hasNewAccessToken: !!tokens.accessToken,
+      expiresIn: tokens.expiresIn,
+    });
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken || refreshToken,
+      expiresIn: tokens.expiresIn,
+      idToken: tokens.idToken,
+    };
+  }, log);
+}
+
 // iFlow: Basic Auth + client_id+client_secret in body. Delegate to refreshAccessToken("iflow", ...).
 export async function refreshIflowToken(refreshToken, log) {
   return refreshAccessToken("iflow", refreshToken, {}, log);

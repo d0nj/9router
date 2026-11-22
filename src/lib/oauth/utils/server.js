@@ -435,6 +435,168 @@ export function stopXaiProxy() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Amazon Quick proxy. Fixed port 18080 because Quick's discovery page hardcodes it.
+// Two callbacks arrive here: /callback carries the discovery result (tenantUrl),
+// then / receives the OIDC redirect (code) after the browser is bounced to AWS SSO OIDC.
+// ───────────────────────────────────────────────────────────────────────────
+
+let awsQuickProxyServer = null;
+let awsQuickProxyTimeout = null;
+const AWS_QUICK_PROXY_PORT = 18080;
+const AWS_QUICK_PROXY_TIMEOUT_MS = 300000;
+const awsQuickPending = new Map();
+
+export function registerAwsQuickSession({ state, codeVerifier, redirectUri }) {
+  if (!state || !codeVerifier || !redirectUri) return false;
+  awsQuickPending.set(state, {
+    codeVerifier,
+    redirectUri,
+    status: "pending",
+    createdAt: Date.now(),
+  });
+  return true;
+}
+
+export function getAwsQuickSessionStatus(state) {
+  return awsQuickPending.get(state) || null;
+}
+
+export function clearAwsQuickSession(state) {
+  awsQuickPending.delete(state);
+}
+
+export function startAwsQuickProxy() {
+  return new Promise((resolve) => {
+    if (awsQuickProxyServer) {
+      resolve({ success: true });
+      return;
+    }
+
+    const server = http.createServer(async (req, res) => {
+      if (!isLoopbackOrigin(req.headers.origin)) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      const url = new URL(req.url, "http://localhost");
+      const isDiscovery = url.pathname === "/callback" && url.searchParams.has("tenantUrl");
+      const isOidc = url.searchParams.has("code") && url.searchParams.has("state");
+      if (!isDiscovery && !isOidc) {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      const state = isDiscovery
+        ? url.searchParams.get("nonce")
+        : url.searchParams.get("state");
+      const session = state ? awsQuickPending.get(state) : null;
+      if (!session) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, "Login session expired. Restart the sign-in."));
+        stopAwsQuickProxy();
+        return;
+      }
+
+      if (isDiscovery) {
+        try {
+          session.tenantUrl = url.searchParams.get("tenantUrl");
+          session.issuerUrl = url.searchParams.get("issuerUrl");
+          session.account = url.searchParams.get("account");
+          session.idcInstanceId = url.searchParams.get("idcInstanceId");
+          session.idcRegion = url.searchParams.get("idcRegion");
+          if (!session.tenantUrl) throw new Error("Quick discovery returned no tenant URL");
+          const { buildAwsQuickOidcUrl } = await import("../providers/awsquick.js");
+          const oidcUrl = buildAwsQuickOidcUrl({
+            codeVerifier: session.codeVerifier,
+            state,
+            redirectUri: session.redirectUri,
+            meta: { region: session.idcRegion || "us-east-1" },
+          });
+          res.writeHead(302, { Location: oidcUrl });
+          res.end();
+        } catch (err) {
+          session.status = "error";
+          session.error = err.message;
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(renderCodexResultPage(false, err.message));
+          stopAwsQuickProxy();
+        }
+        return;
+      }
+
+      try {
+        const errorParam = url.searchParams.get("error");
+        if (errorParam) throw new Error(url.searchParams.get("error_description") || errorParam);
+        const code = url.searchParams.get("code");
+        if (!code) throw new Error("No authorization code received");
+
+        const { exchangeTokens } = await import("../providers.js");
+        const { createProviderConnection } = await import("@/models");
+        const tokenData = await exchangeTokens(
+          "awsquick",
+          code,
+          session.redirectUri,
+          session.codeVerifier,
+          state,
+          {
+            tenantUrl: session.tenantUrl,
+            issuerUrl: session.issuerUrl,
+            account: session.account,
+            idcInstanceId: session.idcInstanceId,
+            idcRegion: session.idcRegion,
+          },
+        );
+        if (!tokenData.providerSpecificData?.tenantUrl) {
+          throw new Error("Quick login did not return a tenant URL");
+        }
+        const connection = await createProviderConnection({
+          provider: "awsquick",
+          authType: "oauth",
+          ...tokenData,
+          expiresAt: tokenData.expiresIn
+            ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
+            : null,
+          testStatus: "active",
+        });
+        session.status = "done";
+        session.connectionId = connection.id;
+        session.email = connection.email;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(true, "You can close this window."));
+      } catch (err) {
+        session.status = "error";
+        session.error = err.message;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, err.message));
+      } finally {
+        stopAwsQuickProxy();
+      }
+    });
+
+    server.on("error", (err) => {
+      resolve({ success: false, reason: err.code === "EADDRINUSE" ? "port_busy" : err.message });
+    });
+    server.listen(AWS_QUICK_PROXY_PORT, "127.0.0.1", () => {
+      awsQuickProxyServer = server;
+      awsQuickProxyTimeout = setTimeout(() => stopAwsQuickProxy(), AWS_QUICK_PROXY_TIMEOUT_MS);
+      resolve({ success: true });
+    });
+  });
+}
+
+export function stopAwsQuickProxy() {
+  if (awsQuickProxyTimeout) {
+    clearTimeout(awsQuickProxyTimeout);
+    awsQuickProxyTimeout = null;
+  }
+  if (awsQuickProxyServer) {
+    awsQuickProxyServer.close();
+    awsQuickProxyServer = null;
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Trae dynamic-port proxy. Singleton session (one connect at a time per provider).
 // Callback path = /callback with params refreshToken + loginHost.
 // ───────────────────────────────────────────────────────────────────────────

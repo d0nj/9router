@@ -183,6 +183,31 @@ exports[`GOLDEN buildHeaders (default executor providers) > atria → headers (a
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > awsquick → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "Amazon Quick/1.2.4660",
+    "X-QuickDsk-mdid": "redaction-validator",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "Amazon Quick/1.2.4660",
+    "X-QuickDsk-mdid": "redaction-validator",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "Amazon Quick/1.2.4660",
+    "X-QuickDsk-mdid": "redaction-validator",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > bai → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1742,6 +1767,13 @@ exports[`GOLDEN buildUrl (default executor providers) > atria → url (stream + 
 {
   "nonStream": "https://api.atria-asi.ai/v1/chat/completions",
   "stream": "https://api.atria-asi.ai/v1/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > awsquick → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://tenant.invalid",
+  "stream": "https://tenant.invalid",
 }
 `;
 

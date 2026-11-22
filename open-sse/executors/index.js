@@ -36,6 +36,7 @@ import { DefaultExecutor } from "./default.js";
 import { MinimaxCodeExecutor } from "./minimax-code.js";
 import { DevinCliExecutor } from "./devin-cli.js";
 import { ZCodeExecutor } from "./zcode.js";
+import { AWSQuickExecutor } from "./awsquick.js";
 
 const executors = {
   antigravity: new AntigravityExecutor(),
@@ -89,6 +90,8 @@ const executors = {
   // vertex / vertex-partner already uses.
   "bedrock-xai": new BedrockExecutor("bedrock-xai"),
   brx: new BedrockExecutor("bedrock-xai"), // Alias for bedrock-xai
+  awsquick: new AWSQuickExecutor(),
+  awsq: new AWSQuickExecutor(),
 };
 
 const defaultCache = new Map();
@@ -139,3 +142,4 @@ export { default as ZedExecutor } from "./zed.js";
 export { default as WindsurfExecutor } from "./windsurf.js";
 export { DevinCliExecutor } from "./devin-cli.js";
 export { ZCodeExecutor } from "./zcode.js";
+export { AWSQuickExecutor } from "./awsquick.js";
