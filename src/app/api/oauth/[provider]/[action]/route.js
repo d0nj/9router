@@ -489,7 +489,7 @@ export async function POST(request, { params }) {
       }
 
       // Detect if "code" is actually a raw JWT access token (starts with eyJ)
-      if (code && code.startsWith("eyJ") && code.includes(".")) {
+      if (provider !== "awsquick" && code && code.startsWith("eyJ") && code.includes(".")) {
         const { extractCodexAccountInfo } = await import("@/lib/oauth/providers");
         const info = extractCodexAccountInfo(code);
 

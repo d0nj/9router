@@ -1,3 +1,8 @@
+# v0.5.121 (2026-11-22)
+
+## Fixes
+- **AWS Quick OAuth**: authorization codes are JWTs, so the generic `/exchange` handler was misclassifying them as pasted access tokens and saving a dead `access_token` connection; they now go through the provider's token exchange and keep the discovered tenant URL
+
 # v0.5.120 (2026-11-22)
 
 ## Fixes
