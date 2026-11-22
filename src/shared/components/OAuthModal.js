@@ -707,9 +707,6 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
       const input = callbackUrl.trim();
 
-      // AWS Quick uses two loopback callbacks: the first carries tenantUrl, the
-      // second carries the OIDC code. Neither reaches a remote server, so both
-      // are resolved from the URL the user pastes.
       if (provider === "awsquick" && input) {
         const pasted = new URL(input);
         if (pasted.searchParams.has("tenantUrl")) {
