@@ -45,7 +45,7 @@ describe("AWS Quick OAuth flow", () => {
       clientType: "public",
       scopes: ["quicksight:read_write"],
       grantTypes: ["authorization_code", "refresh_token"],
-      redirectUris: ["http://localhost:18080"],
+      redirectUris: ["http://127.0.0.1:18080"],
       issuerUrl: expect.any(String),
     });
   });

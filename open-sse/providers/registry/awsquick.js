@@ -32,7 +32,7 @@ export default {
     tokenUrl: "https://oidc.us-east-1.amazonaws.com/token",
     registerUrl: "https://oidc.us-east-1.amazonaws.com/client/register",
     redirectUri: "http://127.0.0.1:18080",
-    registerRedirectUri: "http://localhost:18080",
+    registerRedirectUri: "http://127.0.0.1:18080",
     fixedPort: 18080,
     callbackPath: "/",
     quickStartUrl: "https://quick.aws.com/sn",
