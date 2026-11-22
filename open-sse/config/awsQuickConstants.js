@@ -6,6 +6,7 @@ export const AWS_QUICK = {
   headers: {
     "User-Agent": "Amazon Quick/1.2.4660",
     "X-QuickDsk-mdid": "user-conversation",
+    "x-amzn-quick-atype": "ufg",
   },
 };
 

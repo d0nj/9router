@@ -1,9 +1,11 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { AWS_QUICK } from "../config/awsQuickConstants.js";
+import { AWS_EVENTSTREAM } from "../config/awsConstants.js";
 import { FORMATS } from "../translator/formats.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
+import { crc32, parseEventFrame } from "../utils/awsEventStream.js";
 
 function decodeBase64Url(value) {
   if (typeof value !== "string") return null;
@@ -122,7 +124,8 @@ function toConverseRequest(body) {
 }
 
 function converseResponseToOpenAI(data, model) {
-  const message = data?.output?.message || {};
+  const body = data?.responseBody && typeof data.responseBody === "object" ? data.responseBody : data;
+  const message = body?.output?.message || {};
   let text = "";
   const toolCalls = [];
   for (const block of message.content || []) {
@@ -140,7 +143,7 @@ function converseResponseToOpenAI(data, model) {
       });
     }
   }
-  const finishReason = data?.stopReason === "tool_use" ? "tool_calls" : "stop";
+  const finishReason = body?.stopReason === "tool_use" ? "tool_calls" : "stop";
   return {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion",
@@ -156,11 +159,31 @@ function converseResponseToOpenAI(data, model) {
       finish_reason: finishReason,
     }],
     usage: {
-      prompt_tokens: data?.usage?.inputTokens || 0,
-      completion_tokens: data?.usage?.outputTokens || 0,
-      total_tokens: data?.usage?.totalTokens || (data?.usage?.inputTokens || 0) + (data?.usage?.outputTokens || 0),
+      prompt_tokens: body?.usage?.inputTokens || 0,
+      completion_tokens: body?.usage?.outputTokens || 0,
+      total_tokens: body?.usage?.totalTokens || (body?.usage?.inputTokens || 0) + (body?.usage?.outputTokens || 0),
     },
   };
+}
+
+function normalizeProxyPayload(parsed) {
+  if (!parsed || typeof parsed !== "object") return null;
+  if (typeof parsed.eventType === "string") {
+    const key = parsed.eventType.charAt(0).toLowerCase() + parsed.eventType.slice(1);
+    const payload = typeof parsed.payload === "string"
+      ? (() => { try { return JSON.parse(parsed.payload); } catch { return { message: parsed.payload }; } })()
+      : (parsed.payload || {});
+    if (key === "error" || key === "serviceUnavailable" || key === "internalServer" || key === "modelStreamError") {
+      return {
+        error: {
+          message: payload?.error || payload?.message || `AWS Quick stream error (${parsed.eventType})`,
+          type: payload?.errorType || parsed.eventType,
+        },
+      };
+    }
+    return { [key]: payload };
+  }
+  return parsed?.event || parsed?.chunk || parsed;
 }
 
 function parseProxyEvent(line) {
@@ -169,11 +192,18 @@ function parseProxyEvent(line) {
   if (text.startsWith("data:")) text = text.slice(5).trim();
   if (!text || text === "[DONE]") return null;
   try {
-    const parsed = JSON.parse(text);
-    return parsed?.event || parsed?.chunk || parsed;
+    return normalizeProxyPayload(JSON.parse(text));
   } catch {
     return null;
   }
+}
+
+function concatBytes(a, b) {
+  if (!a || a.byteLength === 0) return b;
+  const out = new Uint8Array(a.byteLength + b.byteLength);
+  out.set(a, 0);
+  out.set(b, a.byteLength);
+  return out;
 }
 
 export class AWSQuickExecutor extends BaseExecutor {
@@ -220,7 +250,7 @@ export class AWSQuickExecutor extends BaseExecutor {
     delete requestBody.modelId;
     return {
       modelId: model,
-      apiType: AWS_QUICK.apiType,
+      ...(stream ? {} : { apiType: AWS_QUICK.apiType }),
       requestBody,
     };
   }
@@ -246,6 +276,18 @@ export class AWSQuickExecutor extends BaseExecutor {
       } catch {
         return { ...result, response: new Response(text, { status: result.response.status }), responseFormat: FORMATS.OPENAI };
       }
+      if (typeof data?.responseBody === "string") {
+        const message = data.responseBody;
+        const status = /not supported|denied|unauthorized|forbidden/i.test(message) ? 403 : 502;
+        return {
+          ...result,
+          response: new Response(JSON.stringify({ error: { message, type: "api_error" } }), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          }),
+          responseFormat: FORMATS.OPENAI,
+        };
+      }
       const converted = converseResponseToOpenAI(data, model);
       return {
         ...result,
@@ -262,26 +304,111 @@ export class AWSQuickExecutor extends BaseExecutor {
     const encoder = new TextEncoder();
     const id = `chatcmpl-${Date.now()}`;
     const created = Math.floor(Date.now() / 1000);
-    let buffer = "";
+    const contentType = result.response.headers?.get?.("content-type") || "";
+    let isEventStream = contentType.includes("vnd.amazon.eventstream");
+    let binaryBuffer = new Uint8Array(0);
+    let textBuffer = "";
     let cancelled = false;
+    let finished = false;
+
+    const emitEvent = (controller, event) => {
+      if (!event) return;
+      if (event.error) {
+        const err = event.error;
+        const status = /AccessDenied|not supported|unauthorized/i.test(`${err.type || ""} ${err.message || ""}`) ? 403 : 502;
+        controller.enqueue(encoder.encode(sseChunk({ error: { message: err.message, type: err.type || "api_error", status } })));
+        finished = true;
+        return;
+      }
+      const chunk = proxyEventToOpenAIChunk(event, id, created, model);
+      if (chunk) controller.enqueue(encoder.encode(sseChunk(chunk)));
+    };
+
+    const drainBinaryFrames = (controller) => {
+      while (binaryBuffer.byteLength >= 12 && !finished) {
+        const view = new DataView(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength);
+        if (view.getUint32(8, false) !== crc32(binaryBuffer.subarray(0, 8))) {
+          controller.enqueue(encoder.encode(sseChunk({ error: { message: "AWS Quick EventStream prelude CRC mismatch", type: "api_error", status: 502 } })));
+          finished = true;
+          return;
+        }
+        const totalLength = view.getUint32(0, false);
+        const headersLength = view.getUint32(4, false);
+        if (
+          totalLength < 16 ||
+          totalLength > AWS_EVENTSTREAM.maxMessageBytes ||
+          headersLength > AWS_EVENTSTREAM.maxHeadersBytes ||
+          headersLength > totalLength - 16
+        ) {
+          controller.enqueue(encoder.encode(sseChunk({ error: { message: "AWS Quick EventStream frame bounds are invalid", type: "api_error", status: 502 } })));
+          finished = true;
+          return;
+        }
+        if (binaryBuffer.byteLength < totalLength) break;
+        const frame = binaryBuffer.slice(0, totalLength);
+        binaryBuffer = binaryBuffer.slice(totalLength);
+        let decoded;
+        try {
+          decoded = parseEventFrame(frame);
+        } catch (err) {
+          controller.enqueue(encoder.encode(sseChunk({ error: { message: err.message, type: "api_error", status: 502 } })));
+          finished = true;
+          return;
+        }
+        const messageType = decoded.headers[":message-type"];
+        if (messageType === "exception" || messageType === "error") {
+          const message =
+            decoded.payload?.error ||
+            decoded.payload?.message ||
+            decoded.payload?.Message ||
+            decoded.headers[":error-message"] ||
+            `AWS Quick EventStream ${messageType}`;
+          const type = decoded.payload?.errorType || decoded.headers[":exception-type"] || decoded.headers[":error-code"] || "api_error";
+          emitEvent(controller, { error: { message, type } });
+          return;
+        }
+        emitEvent(controller, normalizeProxyPayload(decoded.payload));
+      }
+    };
 
     const responseStream = new ReadableStream({
       async pull(controller) {
-        while (!cancelled) {
+        while (!cancelled && !finished) {
           const { done, value } = await reader.read();
           if (done) {
+            if (!isEventStream && textBuffer.trim()) {
+              emitEvent(controller, parseProxyEvent(textBuffer));
+            }
             controller.enqueue(encoder.encode(SSE_DONE));
             controller.close();
             return;
           }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+          if (!isEventStream && binaryBuffer.byteLength === 0 && textBuffer.length === 0 && value.byteLength >= 12) {
+            const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+            if (view.getUint32(8, false) === crc32(value.subarray(0, 8))) {
+              isEventStream = true;
+            }
+          }
+          if (isEventStream) {
+            binaryBuffer = concatBytes(binaryBuffer, value);
+            drainBinaryFrames(controller);
+            if (finished) {
+              controller.enqueue(encoder.encode(SSE_DONE));
+              controller.close();
+              return;
+            }
+            continue;
+          }
+          textBuffer += decoder.decode(value, { stream: true });
+          const lines = textBuffer.split("\n");
+          textBuffer = lines.pop() || "";
           for (const line of lines) {
-            const event = parseProxyEvent(line);
-            if (!event) continue;
-            const chunk = proxyEventToOpenAIChunk(event, id, created, model);
-            if (chunk) controller.enqueue(encoder.encode(sseChunk(chunk)));
+            emitEvent(controller, parseProxyEvent(line));
+            if (finished) {
+              controller.enqueue(encoder.encode(SSE_DONE));
+              controller.close();
+              return;
+            }
           }
         }
       },
@@ -371,10 +498,10 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
   return null;
 }
 
-export function buildAWSQuickRequestBody(model, body) {
+export function buildAWSQuickRequestBody(model, body, stream = false) {
   const requestBody = toConverseRequest(body || {});
   delete requestBody.modelId;
-  return { modelId: model, apiType: AWS_QUICK.apiType, requestBody };
+  return { modelId: model, ...(stream ? {} : { apiType: AWS_QUICK.apiType }), requestBody };
 }
 
 export function parseAWSQuickResponse(data, model) {

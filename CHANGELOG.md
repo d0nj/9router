@@ -1,3 +1,8 @@
+# v0.5.122 (2026-11-22)
+
+## Fixes
+- **AWS Quick**: decode `application/vnd.amazon.eventstream` binary stream frames and `eventType`/`payload` events, add `x-amzn-quick-atype: ufg`, omit `apiType` on streaming requests, unwrap `responseBody`, and surface `AccessDeniedException` / string `responseBody` errors instead of returning empty 0-token completions
+
 # v0.5.121 (2026-11-22)
 
 ## Fixes
