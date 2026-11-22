@@ -3,6 +3,7 @@ import { OAUTH_ENDPOINTS, GITHUB_COPILOT, buildKimiHeaders } from "../../config/
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
+import { awsOidcFetch } from "../../utils/awsOidcFetch.js";
 
 let _xaiServiceSingleton = null;
 export async function refreshXaiToken(refreshToken, log) {
@@ -380,7 +381,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
       ? `https://oidc.${region}.amazonaws.com/token`
       : "https://oidc.us-east-1.amazonaws.com/token";
 
-    const response = await proxyAwareFetch(endpoint, {
+    const response = await awsOidcFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -466,7 +467,7 @@ export async function refreshAwsQuickToken(refreshToken, providerSpecificData, l
       log?.warn?.("TOKEN_REFRESH", "AWS Quick refresh skipped: no registered client credentials");
       return null;
     }
-    const response = await proxyAwareFetch(`https://${oidcHost}/token`, {
+    const response = await awsOidcFetch(`https://${oidcHost}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ clientId, clientSecret, refreshToken, grantType: "refresh_token" }),

@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { AWS_QUICK_CONFIG, assertValidAwsRegion } from "../constants/oauth.js";
 import { extractEmailFromAccessToken } from "../providerHelpers.js";
+import { awsOidcFetch } from "open-sse/utils/awsOidcFetch.js";
 
 let cachedClient = null;
 
@@ -24,7 +25,7 @@ async function postOidc(hosts, path, body, label) {
     const url = `https://${host}${path}`;
     let response;
     try {
-      response = await fetch(url, {
+      response = await awsOidcFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("open-sse/utils/awsOidcFetch.js", () => ({
+  awsOidcFetch: (...args) => fetch(...args),
+}));
+
 import { generateAuthData, exchangeTokens } from "../../src/lib/oauth/providers/index.js";
 import { buildAwsQuickOidcUrl } from "../../src/lib/oauth/providers/awsquick.js";
 import { getAwsQuickSessionStatus, registerAwsQuickSession } from "../../src/lib/oauth/utils/server.js";

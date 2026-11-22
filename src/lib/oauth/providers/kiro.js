@@ -1,5 +1,6 @@
 import { KIRO_CONFIG, assertValidAwsRegion } from "../constants/oauth.js";
 import { extractEmailFromAccessToken } from "../providerHelpers.js";
+import { awsOidcFetch } from "open-sse/utils/awsOidcFetch.js";
 
 const kiro = {
   config: KIRO_CONFIG,
@@ -16,7 +17,7 @@ const kiro = {
     const deviceAuthUrl = `https://oidc.${region}.amazonaws.com/device_authorization`;
 
     // Step 1: Register client with AWS SSO OIDC
-    const registerRes = await fetch(registerClientUrl, {
+    const registerRes = await awsOidcFetch(registerClientUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -39,7 +40,7 @@ const kiro = {
     const clientInfo = await registerRes.json();
 
     // Step 2: Request device authorization
-    const deviceRes = await fetch(deviceAuthUrl, {
+    const deviceRes = await awsOidcFetch(deviceAuthUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -79,7 +80,7 @@ const kiro = {
     const region = extraData?._region || "us-east-1";
     assertValidAwsRegion(region);
     const tokenUrl = `https://oidc.${region}.amazonaws.com/token`;
-    const response = await fetch(tokenUrl, {
+    const response = await awsOidcFetch(tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
