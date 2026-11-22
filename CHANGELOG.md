@@ -1,3 +1,8 @@
+# v0.5.123 (2026-11-22)
+
+## Fixes
+- **AWS Quick**: satisfy the DataPlane's `system[0]` 128-char prefix allowlist so `bedrock-proxy` / `bedrock-proxy-stream` requests succeed instead of returning `"This client is not supported for this request."`, merge parallel tool results into one user turn, map `reasoning_effort`/thinking and `reasoningContent` deltas, preserve `contentBlockIndex` on streamed tool deltas, and omit unsupported `temperature`/`top_p` on adaptive-thinking models
+
 # v0.5.122 (2026-11-22)
 
 ## Fixes

@@ -8,6 +8,8 @@ export const AWS_QUICK = {
     "X-QuickDsk-mdid": "user-conversation",
     "x-amzn-quick-atype": "ufg",
   },
+  allowedSystemPrefix:
+    "You classify whether numbers marked in text are real credit card numbers or false positives.\n\nEach marked number already passed ",
 };
 
 export default AWS_QUICK;

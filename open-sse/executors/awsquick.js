@@ -56,13 +56,24 @@ function toConverseContent(content) {
 
 function toConverseMessages(messages) {
   const result = [];
+  const pushTurn = (role, blocks) => {
+    if (!blocks.length) return;
+    const prev = result[result.length - 1];
+    if (prev && prev.role === role) {
+      prev.content.push(...blocks);
+    } else {
+      result.push({ role, content: blocks });
+    }
+  };
   for (const message of messages || []) {
     if (message.role === "system") continue;
     if (message.role === "tool") {
-      result.push({
-        role: "user",
-        content: [{ toolResult: { toolUseId: message.tool_call_id, content: toConverseContent(message.content) } }],
-      });
+      pushTurn("user", [{
+        toolResult: {
+          toolUseId: message.tool_call_id,
+          content: toConverseContent(message.content),
+        },
+      }]);
       continue;
     }
     const content = toConverseContent(message.content);
@@ -77,27 +88,60 @@ function toConverseMessages(messages) {
       }
       content.push({ toolUse: { toolUseId: call.id, name: call.function?.name, input: input || {} } });
     }
-    result.push({ role: message.role === "assistant" ? "assistant" : "user", content });
+    pushTurn(message.role === "assistant" ? "assistant" : "user", content);
   }
   return result;
 }
 
-function toConverseRequest(body) {
+const ADAPTIVE_THINKING_RE = /claude-(opus-4-8|.*-5(?:-|$))/i;
+const THINKING_EFFORTS = new Set(["low", "medium", "high", "max"]);
+
+function resolveThinkingEffort(body) {
+  const raw = body?.reasoning_effort || body?.reasoning?.effort;
+  if (typeof raw === "string") {
+    const normalized = raw.toLowerCase();
+    if (normalized === "xhigh") return "max";
+    if (THINKING_EFFORTS.has(normalized)) return normalized;
+  }
+  return null;
+}
+
+function toConverseRequest(body, model) {
   const request = {};
   const system = (body.messages || [])
     .filter((message) => message.role === "system")
     .flatMap((message) => toConverseContent(message.content))
     .filter((block) => block.text != null);
+  const requiredPrefix = AWS_QUICK.allowedSystemPrefix;
+  if (requiredPrefix) {
+    const firstText = system[0]?.text;
+    if (typeof firstText !== "string" || !firstText.startsWith(requiredPrefix)) {
+      system.unshift({ text: requiredPrefix });
+    }
+  }
   if (system.length) request.system = system;
   request.messages = toConverseMessages(body.messages);
+
+  const effort = resolveThinkingEffort(body);
+  const isClaude = !model || /claude/i.test(model);
+  const thinkingActive = Boolean(effort) || (typeof model === "string" && ADAPTIVE_THINKING_RE.test(model));
 
   const inferenceConfig = {};
   const maxTokens = body.max_completion_tokens ?? body.max_tokens;
   if (maxTokens != null) inferenceConfig.maxTokens = maxTokens;
-  if (body.temperature != null) inferenceConfig.temperature = body.temperature;
-  if (body.top_p != null) inferenceConfig.topP = body.top_p;
+  if (body.temperature != null && (!thinkingActive || body.temperature === 1)) {
+    inferenceConfig.temperature = body.temperature;
+  }
+  if (body.top_p != null && !thinkingActive) inferenceConfig.topP = body.top_p;
   if (Array.isArray(body.stop) && body.stop.length) inferenceConfig.stopSequences = body.stop;
   if (Object.keys(inferenceConfig).length) request.inferenceConfig = inferenceConfig;
+
+  if (effort && isClaude) {
+    request.additionalModelRequestFields = {
+      thinking: { type: "adaptive" },
+      output_config: { effort },
+    };
+  }
 
   if (Array.isArray(body.tools) && body.tools.length) {
     const tools = body.tools
@@ -127,9 +171,13 @@ function converseResponseToOpenAI(data, model) {
   const body = data?.responseBody && typeof data.responseBody === "object" ? data.responseBody : data;
   const message = body?.output?.message || {};
   let text = "";
+  let reasoning = "";
   const toolCalls = [];
   for (const block of message.content || []) {
     if (block?.text != null) text += block.text;
+    if (block?.reasoningContent?.reasoningText?.text != null) {
+      reasoning += block.reasoningContent.reasoningText.text;
+    }
     if (block?.toolUse) {
       toolCalls.push({
         id: block.toolUse.toolUseId,
@@ -154,6 +202,7 @@ function converseResponseToOpenAI(data, model) {
       message: {
         role: "assistant",
         content: text || null,
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
       },
       finish_reason: finishReason,
@@ -246,7 +295,7 @@ export class AWSQuickExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    const requestBody = toConverseRequest(body || {});
+    const requestBody = toConverseRequest(body || {}, model);
     delete requestBody.modelId;
     return {
       modelId: model,
@@ -278,7 +327,11 @@ export class AWSQuickExecutor extends BaseExecutor {
       }
       if (typeof data?.responseBody === "string") {
         const message = data.responseBody;
-        const status = /not supported|denied|unauthorized|forbidden/i.test(message) ? 403 : 502;
+        const status = /validation|Status Code: 400/i.test(message)
+          ? 400
+          : /not supported|denied|unauthorized|forbidden/i.test(message)
+            ? 403
+            : 502;
         return {
           ...result,
           response: new Response(JSON.stringify({ error: { message, type: "api_error" } }), {
@@ -444,15 +497,19 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
   if (deltaEvent?.text != null) {
     return { ...base, choices: [{ index: 0, delta: { content: deltaEvent.text }, finish_reason: null }] };
   }
+  if (deltaEvent?.reasoningContent?.text != null) {
+    return { ...base, choices: [{ index: 0, delta: { reasoning_content: deltaEvent.reasoningContent.text }, finish_reason: null }] };
+  }
   if (deltaEvent?.toolUse) {
     const tool = deltaEvent.toolUse;
+    const toolIndex = event.contentBlockDelta?.contentBlockIndex ?? tool.index ?? 0;
     return {
       ...base,
       choices: [{
         index: 0,
         delta: {
           tool_calls: [{
-            index: tool.index || 0,
+            index: toolIndex,
             ...(tool.name ? { id: tool.toolUseId, type: "function", function: { name: tool.name, arguments: "" } } : {}),
             ...(tool.input != null ? { function: { arguments: typeof tool.input === "string" ? tool.input : JSON.stringify(tool.input) } } : {}),
           }],
@@ -499,7 +556,7 @@ function proxyEventToOpenAIChunk(event, id, created, model) {
 }
 
 export function buildAWSQuickRequestBody(model, body, stream = false) {
-  const requestBody = toConverseRequest(body || {});
+  const requestBody = toConverseRequest(body || {}, model);
   delete requestBody.modelId;
   return { modelId: model, ...(stream ? {} : { apiType: AWS_QUICK.apiType }), requestBody };
 }
