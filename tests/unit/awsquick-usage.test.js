@@ -162,4 +162,25 @@ describe("AWS Quick usage & quota tracker", () => {
     });
     expect(ssrfErr.message).toContain("not an AWS Quick DataPlane host");
   });
+
+  it("wires refreshCredentials on AWSQuickExecutor and classifies invalid_grant refresh errors", async () => {
+    const { getExecutor } = await import("../../open-sse/executors/index.js");
+    const { isUnrecoverableRefreshError } = await import("../../open-sse/services/tokenRefresh.js");
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      error: "invalid_grant",
+      error_description: "Invalid refresh token provided",
+    }), { status: 400, headers: { "Content-Type": "application/json" } })));
+
+    const executor = getExecutor("awsquick");
+    const refreshed = await executor.refreshCredentials({
+      refreshToken: "RT_REVOKED",
+      providerSpecificData: {
+        clientId: "cid",
+        clientSecret: "csec",
+        region: "us-east-1",
+      },
+    });
+    expect(isUnrecoverableRefreshError(refreshed)).toBe(true);
+  });
 });

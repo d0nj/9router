@@ -1,3 +1,8 @@
+# v0.5.127 (2026-11-23)
+
+## Fixes
+- **AWS Quick OAuth Refresh & Quota**: wire `AWSQuickExecutor.refreshCredentials` (which was inheriting `BaseExecutor`'s no-op `return null`), classify permanent `invalid_grant` / revoked refresh token errors in `refreshAwsQuickToken` via `classifyOAuthRefreshError`, and surface unrecoverable refresh errors cleanly from `/api/usage/[connectionId]`
+
 # v0.5.126 (2026-11-23)
 
 ## Features

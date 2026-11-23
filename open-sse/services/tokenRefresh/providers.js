@@ -474,6 +474,14 @@ export async function refreshAwsQuickToken(refreshToken, providerSpecificData, l
     }, proxyOptions);
     if (!response.ok) {
       const errorText = await response.text();
+      const failure = classifyOAuthRefreshError(errorText, response.status);
+      if (failure.permanent) {
+        log?.error?.("TOKEN_REFRESH", "AWS Quick refresh token already used or invalid. Re-auth required.", {
+          status: response.status,
+          code: failure.code,
+        });
+        return { error: "unrecoverable_refresh_error", code: failure.code };
+      }
       log?.error?.("TOKEN_REFRESH", "Failed to refresh AWS Quick token", {
         status: response.status,
         error: errorText,

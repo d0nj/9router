@@ -191,9 +191,15 @@ export async function GET(request, { params }) {
       try {
         const retryResult = await refreshAndUpdateCredentials(connection, true, proxyOptions);
         connection = retryResult.connection;
-        usage = await getUsageForProvider(connection, proxyOptions, { force });
+        if (retryResult.refreshed) {
+          usage = await getUsageForProvider(connection, proxyOptions, { force });
+        }
       } catch (retryError) {
         console.warn(`[Usage] ${connection.provider}: force refresh failed: ${retryError.message}`);
+        return Response.json({
+          plan: usage?.plan || connection.provider,
+          message: retryError.message,
+        });
       }
     }
 

@@ -6,6 +6,7 @@ import { FORMATS } from "../translator/formats.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
 import { crc32, parseEventFrame } from "../utils/awsEventStream.js";
+import { refreshAwsQuickToken } from "../services/tokenRefresh.js";
 
 function decodeBase64Url(value) {
   if (typeof value !== "string") return null;
@@ -359,6 +360,21 @@ export class AWSQuickExecutor extends BaseExecutor {
 
   resolveTenantUrl(credentials) {
     return resolveAwsQuickTenantUrl(credentials);
+  }
+
+  async refreshCredentials(credentials, log, proxyOptions = null) {
+    if (!credentials?.refreshToken) return null;
+    try {
+      return await refreshAwsQuickToken(
+        credentials.refreshToken,
+        credentials.providerSpecificData,
+        log,
+        proxyOptions,
+      );
+    } catch (error) {
+      log?.error?.("TOKEN", `AWS Quick refresh error: ${error.message}`);
+      return null;
+    }
   }
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
