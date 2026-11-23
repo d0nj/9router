@@ -1,3 +1,8 @@
+# v0.5.125 (2026-11-23)
+
+## Fixes
+- **AWS Quick**: detect `usageLimitExceeded` / `BLOCKED_*` `usageSummary` entitlements and other stream/non-stream error frames, peek the initial stream before returning HTTP 200 so pre-content failures become proper HTTP 429/403/502 errors with `resetsAtMs` (triggering account/combo fallback instead of ending OpenAI SSE streams without `finish_reason`), and return structured `{ status, message, resetsAtMs }` from `parseError`
+
 # v0.5.124 (2026-11-22)
 
 ## Fixes

@@ -215,6 +215,72 @@ function converseResponseToOpenAI(data, model) {
   };
 }
 
+const ERROR_EVENT_KEYS = new Set([
+  "error",
+  "serviceUnavailable",
+  "internalServer",
+  "modelStreamError",
+  "throttling",
+  "validation",
+  "accessDenied",
+  "modelTimeout",
+  "modelNotReady",
+  "resourceNotFound",
+]);
+
+function classifyProxyError(type, message, fallbackStatus = 502) {
+  const combined = `${type || ""} ${message || ""}`;
+  if (/usageLimit|BLOCKED_MONTHLY|BLOCKED_SESSION|throttl|too many requests|rate.?limit/i.test(combined)) {
+    return 429;
+  }
+  if (/validation|Status Code: 400|invalid|malformed|context.{0,20}(?:length|window|limit|overflow)|too long|input tokens exceed/i.test(combined)) {
+    return 400;
+  }
+  if (/AccessDenied|not supported|unauthorized|forbidden|disabled/i.test(combined)) {
+    return 403;
+  }
+  if (/unavailable|overloaded|modelNotReady/i.test(combined)) {
+    return 503;
+  }
+  if (/timeout/i.test(combined)) {
+    return 504;
+  }
+  return fallbackStatus;
+}
+
+function buildUsageLimitError(usageSummary, payload = null) {
+  const statusLabel = usageSummary?.entitlementStatus || "BLOCKED";
+  const monthly = usageSummary?.monthlyUsage;
+  const session = usageSummary?.sessionUsage;
+  let resetsAtMs;
+  if (
+    typeof session?.resumeInMinutes === "number" &&
+    session.resumeInMinutes > 0 &&
+    (statusLabel === "BLOCKED_SESSION" || monthly?.availableUnits !== 0)
+  ) {
+    resetsAtMs = Date.now() + session.resumeInMinutes * 60_000;
+  } else if (typeof monthly?.resetsAt === "number" && monthly.resetsAt > 0) {
+    resetsAtMs = monthly.resetsAt > 1e12 ? monthly.resetsAt : monthly.resetsAt * 1000;
+  }
+  const details = [statusLabel];
+  if (typeof monthly?.availableUnits === "number" && typeof monthly?.provisionedUnits === "number") {
+    details.push(`${monthly.availableUnits}/${monthly.provisionedUnits} monthly units left`);
+  }
+  if (typeof session?.resumeInMinutes === "number" && session.resumeInMinutes > 0 && statusLabel === "BLOCKED_SESSION") {
+    details.push(`resumes in ${session.resumeInMinutes}m`);
+  } else if (resetsAtMs) {
+    details.push(`resets at ${new Date(resetsAtMs).toISOString()}`);
+  }
+  const baseMessage = payload?.message || payload?.error || "AWS Quick usage limit exceeded";
+  return {
+    message: `${baseMessage} (${details.join(", ")})`,
+    type: "usage_limit_exceeded",
+    code: statusLabel,
+    status: 429,
+    ...(resetsAtMs ? { resetsAtMs } : {}),
+  };
+}
+
 function normalizeProxyPayload(parsed) {
   if (!parsed || typeof parsed !== "object") return null;
   if (typeof parsed.eventType === "string") {
@@ -222,11 +288,26 @@ function normalizeProxyPayload(parsed) {
     const payload = typeof parsed.payload === "string"
       ? (() => { try { return JSON.parse(parsed.payload); } catch { return { message: parsed.payload }; } })()
       : (parsed.payload || {});
-    if (key === "error" || key === "serviceUnavailable" || key === "internalServer" || key === "modelStreamError") {
+    const usageSummary = parsed.usageSummary || payload?.usageSummary;
+    const isBlockedEntitlement = typeof usageSummary?.entitlementStatus === "string"
+      && /^BLOCKED_/i.test(usageSummary.entitlementStatus);
+    if (key === "usageLimitExceeded") {
+      return { error: buildUsageLimitError(usageSummary, payload) };
+    }
+    const isContentEvent = Boolean(
+      payload?.delta || payload?.start || payload?.stopReason || payload?.usage || payload?.role || payload?.contentBlockIndex != null,
+    );
+    if (isBlockedEntitlement && !isContentEvent) {
+      return { error: buildUsageLimitError(usageSummary, payload) };
+    }
+    if (ERROR_EVENT_KEYS.has(key) || key.endsWith("Exception") || (!isContentEvent && (payload?.error || payload?.errorType))) {
+      const message = payload?.error || payload?.message || payload?.Message || `AWS Quick stream error (${parsed.eventType})`;
+      const type = payload?.errorType || parsed.eventType;
       return {
         error: {
-          message: payload?.error || payload?.message || `AWS Quick stream error (${parsed.eventType})`,
-          type: payload?.errorType || parsed.eventType,
+          message,
+          type,
+          status: classifyProxyError(type, message),
         },
       };
     }
@@ -327,11 +408,7 @@ export class AWSQuickExecutor extends BaseExecutor {
       }
       if (typeof data?.responseBody === "string") {
         const message = data.responseBody;
-        const status = /validation|Status Code: 400/i.test(message)
-          ? 400
-          : /not supported|denied|unauthorized|forbidden/i.test(message)
-            ? 403
-            : 502;
+        const status = classifyProxyError("", message);
         return {
           ...result,
           response: new Response(JSON.stringify({ error: { message, type: "api_error" } }), {
@@ -340,6 +417,34 @@ export class AWSQuickExecutor extends BaseExecutor {
           }),
           responseFormat: FORMATS.OPENAI,
         };
+      }
+      const responseBody = data?.responseBody && typeof data.responseBody === "object" ? data.responseBody : null;
+      if (!responseBody?.output && !data?.output) {
+        const usageSummary = data?.usageSummary || responseBody?.usageSummary;
+        if (typeof usageSummary?.entitlementStatus === "string" && /^BLOCKED_/i.test(usageSummary.entitlementStatus)) {
+          const err = buildUsageLimitError(usageSummary, responseBody);
+          return {
+            ...result,
+            response: new Response(JSON.stringify({ error: err }), {
+              status: 429,
+              headers: { "Content-Type": "application/json" },
+            }),
+            responseFormat: FORMATS.OPENAI,
+          };
+        }
+        const errMessage = responseBody?.error || responseBody?.message || data?.error || data?.message;
+        if (typeof errMessage === "string" && errMessage) {
+          const errType = responseBody?.errorType || data?.errorType || "api_error";
+          const status = classifyProxyError(errType, errMessage);
+          return {
+            ...result,
+            response: new Response(JSON.stringify({ error: { message: errMessage, type: errType, status } }), {
+              status,
+              headers: { "Content-Type": "application/json" },
+            }),
+            responseFormat: FORMATS.OPENAI,
+          };
+        }
       }
       const converted = converseResponseToOpenAI(data, model);
       return {
@@ -363,8 +468,13 @@ export class AWSQuickExecutor extends BaseExecutor {
     let textBuffer = "";
     let cancelled = false;
     let finished = false;
+    let errored = false;
     let pendingFinishReason = null;
     let pendingUsage = null;
+    let activeController = null;
+    let preStreamError = null;
+    let streamAccepted = false;
+    const bufferedSse = [];
     const toolCallIndices = new Map();
     const resolveToolIndex = (blockIndex) => {
       if (blockIndex == null) return 0;
@@ -374,8 +484,33 @@ export class AWSQuickExecutor extends BaseExecutor {
       return toolCallIndices.get(blockIndex);
     };
 
-    const flushTerminal = (controller) => {
-      if (!pendingFinishReason && !pendingUsage) return;
+    const emitSse = (sseText) => {
+      if (activeController) {
+        activeController.enqueue(encoder.encode(sseText));
+      } else {
+        bufferedSse.push(sseText);
+      }
+    };
+
+    const emitError = (err) => {
+      finished = true;
+      errored = true;
+      const normalized = {
+        message: err.message || "AWS Quick stream error",
+        type: err.type || "api_error",
+        ...(err.code ? { code: err.code } : {}),
+        status: err.status || classifyProxyError(err.type, err.message),
+        ...(err.resetsAtMs ? { resetsAtMs: err.resetsAtMs } : {}),
+      };
+      if (activeController) {
+        activeController.enqueue(encoder.encode(sseChunk({ error: normalized })));
+      } else {
+        preStreamError = normalized;
+      }
+    };
+
+    const flushTerminal = () => {
+      if (errored || (!pendingFinishReason && !pendingUsage)) return;
       const chunk = {
         id,
         object: "chat.completion.chunk",
@@ -386,24 +521,30 @@ export class AWSQuickExecutor extends BaseExecutor {
       };
       pendingFinishReason = null;
       pendingUsage = null;
-      controller.enqueue(encoder.encode(sseChunk(chunk)));
+      emitSse(sseChunk(chunk));
     };
 
-    const emitEvent = (controller, event) => {
-      if (!event) return;
+    const emitEvent = (event) => {
+      if (!event || finished) return;
       if (event.error) {
-        const err = event.error;
-        const status = /AccessDenied|not supported|unauthorized/i.test(`${err.type || ""} ${err.message || ""}`) ? 403 : 502;
-        controller.enqueue(encoder.encode(sseChunk({ error: { message: err.message, type: err.type || "api_error", status } })));
-        finished = true;
+        emitError(event.error);
         return;
       }
+      if (event.messageStart) {
+        streamAccepted = true;
+        return;
+      }
+      if (event.contentBlockStart || event.contentBlockDelta || event.contentBlockStop) {
+        streamAccepted = true;
+      }
       if (event.messageStop) {
+        streamAccepted = true;
         pendingFinishReason = event.messageStop.stopReason === "tool_use" ? "tool_calls" : "stop";
-        if (pendingUsage) flushTerminal(controller);
+        if (pendingUsage) flushTerminal();
         return;
       }
       if (event.metadata?.usage) {
+        streamAccepted = true;
         const usage = event.metadata.usage;
         const cachedTokens = usage.cacheReadInputTokens || 0;
         pendingUsage = {
@@ -412,19 +553,21 @@ export class AWSQuickExecutor extends BaseExecutor {
           total_tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
           ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
         };
-        if (pendingFinishReason) flushTerminal(controller);
+        if (pendingFinishReason) flushTerminal();
         return;
       }
       const chunk = proxyEventToOpenAIChunk(event, id, created, model, resolveToolIndex);
-      if (chunk) controller.enqueue(encoder.encode(sseChunk(chunk)));
+      if (chunk) {
+        streamAccepted = true;
+        emitSse(sseChunk(chunk));
+      }
     };
 
-    const drainBinaryFrames = (controller) => {
+    const drainBinaryFrames = () => {
       while (binaryBuffer.byteLength >= 12 && !finished) {
         const view = new DataView(binaryBuffer.buffer, binaryBuffer.byteOffset, binaryBuffer.byteLength);
         if (view.getUint32(8, false) !== crc32(binaryBuffer.subarray(0, 8))) {
-          controller.enqueue(encoder.encode(sseChunk({ error: { message: "AWS Quick EventStream prelude CRC mismatch", type: "api_error", status: 502 } })));
-          finished = true;
+          emitError({ message: "AWS Quick EventStream prelude CRC mismatch", type: "api_error", status: 502 });
           return;
         }
         const totalLength = view.getUint32(0, false);
@@ -435,8 +578,7 @@ export class AWSQuickExecutor extends BaseExecutor {
           headersLength > AWS_EVENTSTREAM.maxHeadersBytes ||
           headersLength > totalLength - 16
         ) {
-          controller.enqueue(encoder.encode(sseChunk({ error: { message: "AWS Quick EventStream frame bounds are invalid", type: "api_error", status: 502 } })));
-          finished = true;
+          emitError({ message: "AWS Quick EventStream frame bounds are invalid", type: "api_error", status: 502 });
           return;
         }
         if (binaryBuffer.byteLength < totalLength) break;
@@ -446,8 +588,7 @@ export class AWSQuickExecutor extends BaseExecutor {
         try {
           decoded = parseEventFrame(frame);
         } catch (err) {
-          controller.enqueue(encoder.encode(sseChunk({ error: { message: err.message, type: "api_error", status: 502 } })));
-          finished = true;
+          emitError({ message: err.message, type: "api_error", status: 502 });
           return;
         }
         const messageType = decoded.headers[":message-type"];
@@ -459,52 +600,116 @@ export class AWSQuickExecutor extends BaseExecutor {
             decoded.headers[":error-message"] ||
             `AWS Quick EventStream ${messageType}`;
           const type = decoded.payload?.errorType || decoded.headers[":exception-type"] || decoded.headers[":error-code"] || "api_error";
-          emitEvent(controller, { error: { message, type } });
+          emitError({ message, type, status: classifyProxyError(type, message) });
           return;
         }
-        emitEvent(controller, normalizeProxyPayload(decoded.payload));
+        emitEvent(normalizeProxyPayload(decoded.payload));
       }
     };
 
+    const processBytes = (value) => {
+      if (!isEventStream && binaryBuffer.byteLength === 0 && textBuffer.length === 0 && value.byteLength >= 12) {
+        const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+        if (view.getUint32(8, false) === crc32(value.subarray(0, 8))) {
+          isEventStream = true;
+        }
+      }
+      if (isEventStream) {
+        binaryBuffer = concatBytes(binaryBuffer, value);
+        drainBinaryFrames();
+        return;
+      }
+      textBuffer += decoder.decode(value, { stream: true });
+      const lines = textBuffer.split("\n");
+      textBuffer = lines.pop() || "";
+      for (const line of lines) {
+        emitEvent(parseProxyEvent(line));
+        if (finished) return;
+      }
+    };
+
+    try {
+      while (!streamAccepted && !preStreamError && !finished) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (!isEventStream && textBuffer.trim()) {
+            emitEvent(parseProxyEvent(textBuffer));
+          }
+          flushTerminal();
+          finished = true;
+          break;
+        }
+        processBytes(value);
+      }
+    } catch (err) {
+      await reader.cancel(err).catch(() => {});
+      throw err;
+    }
+
+    if (preStreamError) {
+      await reader.cancel().catch(() => {});
+      return {
+        ...result,
+        response: new Response(JSON.stringify({ error: preStreamError }), {
+          status: preStreamError.status || 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+        responseFormat: FORMATS.OPENAI,
+      };
+    }
+
+    if (finished && bufferedSse.length === 0) {
+      await reader.cancel().catch(() => {});
+      return {
+        ...result,
+        response: new Response(JSON.stringify({
+          error: { message: "AWS Quick returned an empty stream", type: "api_error", status: 502 },
+        }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+        responseFormat: FORMATS.OPENAI,
+      };
+    }
+
     const responseStream = new ReadableStream({
       async pull(controller) {
+        activeController = controller;
+        if (bufferedSse.length > 0) {
+          while (bufferedSse.length > 0) {
+            controller.enqueue(encoder.encode(bufferedSse.shift()));
+          }
+          if (finished) {
+            flushTerminal();
+            controller.enqueue(encoder.encode(SSE_DONE));
+            controller.close();
+          }
+          return;
+        }
+        if (finished) {
+          flushTerminal();
+          controller.enqueue(encoder.encode(SSE_DONE));
+          controller.close();
+          return;
+        }
         while (!cancelled && !finished) {
           const { done, value } = await reader.read();
           if (done) {
             if (!isEventStream && textBuffer.trim()) {
-              emitEvent(controller, parseProxyEvent(textBuffer));
+              emitEvent(parseProxyEvent(textBuffer));
             }
-            flushTerminal(controller);
+            flushTerminal();
+            finished = true;
             controller.enqueue(encoder.encode(SSE_DONE));
             controller.close();
             return;
           }
-          if (!isEventStream && binaryBuffer.byteLength === 0 && textBuffer.length === 0 && value.byteLength >= 12) {
-            const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
-            if (view.getUint32(8, false) === crc32(value.subarray(0, 8))) {
-              isEventStream = true;
-            }
-          }
-          if (isEventStream) {
-            binaryBuffer = concatBytes(binaryBuffer, value);
-            drainBinaryFrames(controller);
-            if (finished) {
-              controller.enqueue(encoder.encode(SSE_DONE));
-              controller.close();
-              return;
-            }
-            continue;
-          }
-          textBuffer += decoder.decode(value, { stream: true });
-          const lines = textBuffer.split("\n");
-          textBuffer = lines.pop() || "";
-          for (const line of lines) {
-            emitEvent(controller, parseProxyEvent(line));
-            if (finished) {
-              controller.enqueue(encoder.encode(SSE_DONE));
-              controller.close();
-              return;
-            }
+          processBytes(value);
+          if (finished) {
+            flushTerminal();
+            controller.enqueue(encoder.encode(SSE_DONE));
+            controller.close();
+            return;
           }
         }
       },
@@ -527,8 +732,16 @@ export class AWSQuickExecutor extends BaseExecutor {
   parseError(response, bodyText) {
     try {
       const parsed = JSON.parse(bodyText);
-      const message = parsed?.message || parsed?.error?.message || parsed?.error;
-      if (typeof message === "string") return message;
+      const errObj = parsed?.error && typeof parsed.error === "object" ? parsed.error : parsed;
+      const message =
+        (typeof parsed?.error === "string" ? parsed.error : null)
+        || errObj?.message
+        || parsed?.message;
+      const resetsAtMs = typeof errObj?.resetsAtMs === "number" ? errObj.resetsAtMs : undefined;
+      const status = typeof errObj?.status === "number" ? errObj.status : response.status;
+      if (typeof message === "string" && message) {
+        return { status, message, ...(resetsAtMs ? { resetsAtMs } : {}) };
+      }
     } catch {}
     return super.parseError(response, bodyText);
   }

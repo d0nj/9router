@@ -10,6 +10,7 @@ import { getExecutor } from "../../open-sse/executors/index.js";
 import { AWSQuickExecutor, buildAWSQuickRequestBody, parseAWSQuickResponse } from "../../open-sse/executors/awsquick.js";
 import { AWS_QUICK } from "../../open-sse/config/awsQuickConstants.js";
 import { encodeEventFrame } from "../../open-sse/utils/awsEventStream.js";
+import { parseUpstreamError } from "../../open-sse/utils/error.js";
 import { resolveProviderAlias } from "../../open-sse/services/model.js";
 
 afterEach(() => {
@@ -240,7 +241,116 @@ describe("AWS Quick provider", () => {
         providerSpecificData: { tenantUrl: "https://qbs-test.dp.appintegrations.us-east-1.prod.plato.ai.aws.dev" },
       },
     });
+    expect(errResult.response.status).toBe(403);
     const errText = await errResult.response.text();
     expect(errText).toContain("This client is not supported for this request.");
+  });
+
+  it("maps usageLimitExceeded pre-stream and non-stream blocks to 429 with resetsAtMs", async () => {
+    const executor = getExecutor("awsquick");
+    const credentials = {
+      accessToken: "TOK",
+      providerSpecificData: { tenantUrl: "https://qbs-test.dp.appintegrations.us-east-1.prod.plato.ai.aws.dev" },
+    };
+    const resetsAtSec = 1796083200;
+    const usageSummary = {
+      entitlementStatus: "BLOCKED_MONTHLY",
+      monthlyUsage: { availableUnits: 0, provisionedUnits: 600, resetsAt: resetsAtSec, usedPercentage: 100 },
+      sessionUsage: { resumeInMinutes: 0, usedPercentage: 0 },
+    };
+
+    const limitFrame = encodeEventFrame({ ":message-type": "event" }, {
+      eventType: "usageLimitExceeded",
+      payload: {},
+      usageSummary,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(limitFrame, {
+      status: 200,
+      headers: { "Content-Type": "application/vnd.amazon.eventstream" },
+    })));
+    const streamRes = await executor.execute({
+      model: "global.anthropic.claude-opus-5-5",
+      body: { messages: [{ role: "user", content: "hi" }] },
+      stream: true,
+      credentials,
+    });
+    expect(streamRes.response.status).toBe(429);
+    const parsedStreamErr = await parseUpstreamError(streamRes.response, executor);
+    expect(parsedStreamErr.statusCode).toBe(429);
+    expect(parsedStreamErr.message).toContain("BLOCKED_MONTHLY");
+    expect(parsedStreamErr.message).toContain("0/600");
+    expect(parsedStreamErr.resetsAtMs).toBe(resetsAtSec * 1000);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      responseBody: {},
+      usageSummary,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const nonStreamRes = await executor.execute({
+      model: "global.anthropic.claude-opus-5-5",
+      body: { messages: [{ role: "user", content: "hi" }] },
+      stream: false,
+      credentials,
+    });
+    expect(nonStreamRes.response.status).toBe(429);
+    const parsedNonStreamErr = await parseUpstreamError(nonStreamRes.response, executor);
+    expect(parsedNonStreamErr.statusCode).toBe(429);
+    expect(parsedNonStreamErr.resetsAtMs).toBe(resetsAtSec * 1000);
+  });
+
+  it("rejects empty streams and emits mid-stream errors without fabricating finish_reason", async () => {
+    const executor = getExecutor("awsquick");
+    const credentials = {
+      accessToken: "TOK",
+      providerSpecificData: { tenantUrl: "https://qbs-test.dp.appintegrations.us-east-1.prod.plato.ai.aws.dev" },
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(0), {
+      status: 200,
+      headers: { "Content-Type": "application/vnd.amazon.eventstream" },
+    })));
+    const emptyRes = await executor.execute({
+      model: "global.anthropic.claude-opus-5-5",
+      body: { messages: [{ role: "user", content: "hi" }] },
+      stream: true,
+      credentials,
+    });
+    expect(emptyRes.response.status).toBe(502);
+
+    const midFrames = [
+      encodeEventFrame({ ":message-type": "event" }, {
+        eventType: "messageStart",
+        payload: { role: "assistant" },
+      }),
+      encodeEventFrame({ ":message-type": "event" }, {
+        eventType: "contentBlockDelta",
+        payload: { contentBlockIndex: 0, delta: { text: "partial" } },
+      }),
+      encodeEventFrame({ ":message-type": "event" }, {
+        eventType: "modelStreamErrorException",
+        payload: { message: "Model stream interrupted" },
+      }),
+    ];
+    const midBody = new ReadableStream({
+      start(controller) {
+        for (const frame of midFrames) controller.enqueue(frame);
+        controller.close();
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(midBody, {
+      status: 200,
+      headers: { "Content-Type": "application/vnd.amazon.eventstream" },
+    })));
+    const midRes = await executor.execute({
+      model: "global.anthropic.claude-opus-5-5",
+      body: { messages: [{ role: "user", content: "hi" }] },
+      stream: true,
+      credentials,
+    });
+    expect(midRes.response.status).toBe(200);
+    const midText = await midRes.response.text();
+    expect(midText).toContain('"content":"partial"');
+    expect(midText).toContain("Model stream interrupted");
+    expect(midText).not.toContain('"finish_reason":"stop"');
+    expect(midText).toContain("data: [DONE]");
   });
 });
