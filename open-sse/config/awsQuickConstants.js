@@ -1,6 +1,8 @@
 export const AWS_QUICK = {
   proxyPath: "/integration/quick-work/bedrock-proxy",
   proxyStreamPath: "/integration/quick-work/bedrock-proxy-stream",
+  userInfoPath: "/integration/quick-work/user-info",
+  entitlementsPath: "/agenticmetering/v1/get-available-entitlement-units",
   apiType: "CONVERSE",
   source: "user-conversation",
   headers: {

@@ -885,6 +885,7 @@ export function parseQuotaData(provider, data) {
               name: quota.name || name,
               used: quota.used || 0,
               total: quota.total || 0,
+              ...(quota.unit ? { unit: quota.unit } : {}),
               percentage: quota.percentage,
               colorPercentage: quota.colorPercentage,
               percentageIsUsed: quota.percentageIsUsed === true,

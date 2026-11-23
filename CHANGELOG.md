@@ -1,3 +1,8 @@
+# v0.5.126 (2026-11-23)
+
+## Features
+- **AWS Quick Quota Tracker**: add `awsquick` to the Quota page via `features.usage` / `features.usageApikey`, fetching `POST /integration/quick-work/user-info` (`{"excludeUserInfo": true}`) with `GET /agenticmetering/v1/get-available-entitlement-units` fallback to display Monthly (`units`), Session, and Overage quotas with reset countdowns and plan labels
+
 # v0.5.125 (2026-11-23)
 
 ## Fixes

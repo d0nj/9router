@@ -27,6 +27,7 @@ import { getGlmUsage } from "./usage/glm.js";
 import { getZcodeUsage } from "./usage/zcode.js";
 import { getCommandCodeUsage } from "./usage/commandcode.js";
 import { getSyntheticUsage } from "./usage/synthetic.js";
+import { getAwsQuickUsage } from "./usage/awsquick.js";
 import {
   getIflowUsage,
   getOllamaUsage,
@@ -77,6 +78,7 @@ const USAGE_HANDLERS = {
   cursor: (c) => getCursorUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   // OAuth WorkOS JWT (workos: prefix) or plain ClinePass API key — same usage-limits URL.
   clinepass: (c) => getClinepassUsage(c.accessToken, c.apiKey, c.proxyOptions),
+  awsquick: (c) => getAwsQuickUsage(c, c.proxyOptions),
 };
 
 // Qoder intl/CN share one usage path: PATs must be exchanged to a job token

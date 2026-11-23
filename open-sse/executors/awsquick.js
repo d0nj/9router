@@ -336,25 +336,29 @@ function concatBytes(a, b) {
   return out;
 }
 
+export function resolveAwsQuickTenantUrl(credentials) {
+  const fromData = credentials?.providerSpecificData?.tenantUrl
+    || credentials?.providerSpecificData?.tenant_url
+    || credentials?.runtimeTransport?.baseUrl;
+  if (!fromData) return null;
+  const url = new URL(String(fromData));
+  if (url.protocol !== "https:") throw new Error("AWS Quick: tenant URL must use HTTPS");
+  if (url.username || url.password) throw new Error("AWS Quick: tenant URL must not contain credentials");
+  const host = url.hostname;
+  const allowed = host.endsWith(".aws.dev")
+    || host.endsWith(".amazonaws.com")
+    || host.endsWith(".quick.aws.com");
+  if (!allowed) throw new Error("AWS Quick: tenant URL host is not an AWS Quick DataPlane host");
+  return url.origin;
+}
+
 export class AWSQuickExecutor extends BaseExecutor {
   constructor() {
     super("awsquick", PROVIDERS.awsquick || {});
   }
 
   resolveTenantUrl(credentials) {
-    const fromData = credentials?.providerSpecificData?.tenantUrl
-      || credentials?.providerSpecificData?.tenant_url
-      || credentials?.runtimeTransport?.baseUrl;
-    if (!fromData) return null;
-    const url = new URL(String(fromData));
-    if (url.protocol !== "https:") throw new Error("AWS Quick: tenant URL must use HTTPS");
-    if (url.username || url.password) throw new Error("AWS Quick: tenant URL must not contain credentials");
-    const host = url.hostname;
-    const allowed = host.endsWith(".aws.dev")
-      || host.endsWith(".amazonaws.com")
-      || host.endsWith(".quick.aws.com");
-    if (!allowed) throw new Error("AWS Quick: tenant URL host is not an AWS Quick DataPlane host");
-    return url.origin;
+    return resolveAwsQuickTenantUrl(credentials);
   }
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {

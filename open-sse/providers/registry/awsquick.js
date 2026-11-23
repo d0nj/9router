@@ -84,4 +84,8 @@ export default {
     { id: "google.gemma-4-e2b", name: "Gemma 4 E2B" },
   ],
   hasProviderSpecificData: true,
+  features: {
+    usage: true,
+    usageApikey: true,
+  },
 };
