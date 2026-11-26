@@ -181,6 +181,10 @@ function resolveFormat(targetFormat, model, provider) {
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
+  if (targetFormat === "antigravity") {
+    if (caps.thinkingFormat === "claude-adaptive") return "gemini-level";
+    if (caps.thinkingFormat === "claude-budget") return "gemini-budget";
+  }
   const isOpenAIWire = targetFormat === "openai" || targetFormat === "openai-responses";
   if (caps.thinkingFormat && !(isOpenAIWire && NATIVE_ONLY_FORMATS.has(caps.thinkingFormat))) {
     return caps.thinkingFormat;
@@ -252,9 +256,14 @@ export function mapEffortToSupportedLevel(level, supportedLevels) {
 }
 
 function toGeminiThinkingLevel(cfg, supportedLevels) {
-  const raw = cfg.mode === "auto" ? "high" : (toLevel(cfg) || "high");
-  if (supportedLevels?.includes("xhigh") && (raw === "xhigh" || raw === "max")) return "xhigh";
-  return effortToThinkingLevel(raw);
+  const raw = (cfg.mode === "auto" ? "high" : (toLevel(cfg) || "high")).toLowerCase();
+  const level = raw === "ultra" ? "max" : raw;
+  if (supportedLevels?.length) {
+    if (supportedLevels.includes(level)) return level;
+    if (level === "max" && supportedLevels.includes("xhigh")) return "xhigh";
+    if ((level === "max" || level === "xhigh") && supportedLevels.includes("high")) return "high";
+  }
+  return effortToThinkingLevel(level);
 }
 
 function toKimiReasoningEffort(cfg) {
@@ -408,10 +417,7 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels, display, model = "",
       // Models without a "minimal" tier (Gemini 4) reject it with 400 — clamp to the lowest supported level.
       const lowest = supportedLevels?.find((l) => l !== "none");
       if (supportedLevels?.length && lowest && !supportedLevels.includes(level)) level = lowest;
-      // Hydrogen cannot disable thinking; low is its floor, but an explicit
-      // off request must not request thought summaries in the response.
-      const includeThoughts = level !== "minimal" && !(none && model.startsWith("gemini-4-hydrogen"));
-      setGeminiThinking(body, { thinkingLevel: level, includeThoughts });
+      setGeminiThinking(body, { thinkingLevel: level, includeThoughts: level !== "minimal" });
       ensureGeminiOutputFloor(body, geminiLevelOutputFloor(level), caps);
       break;
     }
