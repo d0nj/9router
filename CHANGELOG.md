@@ -1,3 +1,12 @@
+# v0.5.128 (2026-11-26)
+
+## Features
+- **Providers**: merge upstream `v0.5.123` — OpenDesign Go, DeepRelay and QwenCloud join `zcode`/`awsquick`, plus Codex GPT 6.2 Sol/Astra, ElevenLabs live TTS models, NVIDIA NIM embeddings with `input_type`, the Kiro CreateResponse fallback on 429, and Antigravity Gemini 4 Hydrogen with 1M-output CONTINUATION hops
+
+## Fixes
+- **Antigravity**: adopt upstream's tier resolution, client identity (Hub 2.33.0) and fake-429 fixes, keeping this fork's native Gemini `thinkingLevel` and thinking-off tier selection for quota routing
+- **Providers**: keep `awsOidcFetch` for AWS SSO OIDC refresh so Kiro IDC and AWS Quick still connect behind RST-shaped networks
+
 # v0.5.127 (2026-11-23)
 
 ## Fixes
