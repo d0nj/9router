@@ -1,3 +1,9 @@
+## [0.5.129](https://github.com/d0nj/9router/compare/v0.5.128...v0.5.129) (2026-11-27)
+
+### Bug Fixes
+
+* **antigravity:** restore persisted Gemini tool signatures ([fe19cd2](https://github.com/d0nj/9router/commit/fe19cd2c702c586493bdc1c9ae39e3fd3d931818))
+
 # v0.5.128 (2026-11-26)
 
 ## Features
